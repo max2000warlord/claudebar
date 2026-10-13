@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Omarchy shell bar widget for claudebar. Thin host following the first-party
@@ -114,7 +115,7 @@ BarWidget {
     labelVisible: false
     fixedWidth: root.vertical ? -1 : contentRow.implicitWidth + button.scaledHorizontalMargin * 2
     foreground: root.panelItem ? root.panelItem.barColor
-      : (root.bar ? root.bar.barForeground : Color.foreground)
+      : (root.bar ? root.bar.barForeground : Commons.Color.foreground)
     // Degradation is expressed in barColor (a blend toward the muted shade),
     // never by dimming the button: WidgetButton.dimmed drops the whole face to
     // 45% opacity, which made the glyph go visibly dark every time the API
@@ -210,7 +211,7 @@ BarWidget {
           // Monochrome bar keeps the mark — it is the alarm, not decoration —
           // but paints it in the same foreground as the label.
           color: root.panelItem ? root.panelItem.criticalDotColor
-                                : (root.bar ? root.bar.urgent : Color.urgent)
+                                : (root.bar ? root.bar.urgent : Commons.Color.urgent)
         }
       }
     }

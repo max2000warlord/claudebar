@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Claude usage panel. Owns the claudebar --json data (polled through a
@@ -31,8 +32,8 @@ Panel {
   // reference for a card, and a theme that defines popups.text separately would
   // be ignored outright. (printbar already did this; the rest of the family now
   // agrees.)
-  readonly property color foreground: Color.popups.text
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property color foreground: Commons.Color.popups.text
+  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
   readonly property color dim: Qt.darker(foreground, 1.55)
 
   // ---- Freshness suffix tint, shared by the whole family.
@@ -43,7 +44,7 @@ Panel {
   // must act on. Text stays the primary carrier; the tint only reinforces it,
   // so a monochrome panel loses nothing.
   readonly property color freshnessWarn: panelColored ? mix(dim, urgent, 0.4) : dim
-  readonly property color track: Style.selectedFillFor(foreground, Color.accent, urgent)
+  readonly property color track: Style.selectedFillFor(foreground, Commons.Color.accent, urgent)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property bool vertical: bar ? bar.vertical : false
 
@@ -325,7 +326,7 @@ Panel {
   // keeps a pale ramp color readable without discarding its hue.
   readonly property real barWindowPct: barWindowData ? Number(barWindowData.used_pct || 0) : 0
 
-  readonly property color barFaceForeground: bar ? bar.barForeground : Color.foreground
+  readonly property color barFaceForeground: bar ? bar.barForeground : Commons.Color.foreground
   readonly property color barFaceDim: Qt.darker(barFaceForeground, 1.55)
 
   // The bar face paints the ramp at the value it shows — the SAME tone the panel
@@ -417,7 +418,7 @@ Panel {
   // contrast floor blends it toward the panel foreground only as far as it
   // takes to stay legible against the popup surface, so the hue survives
   // wherever it can.
-  readonly property color panelBackdrop: Color.popups.background
+  readonly property color panelBackdrop: Commons.Color.popups.background
   readonly property color brandColor: panelColored
     ? contrastFloor(toColor("#D97757"), panelBackdrop, foreground, 3.0)
     : foreground
@@ -577,10 +578,10 @@ Panel {
   // but the shell already did, and picked a light or dark `barForeground`
   // accordingly, so we take the extreme that choice implies.
   readonly property color barBackdrop: {
-    var fg = bar ? bar.barForeground : Color.foreground
+    var fg = bar ? bar.barForeground : Commons.Color.foreground
     if (bar && bar.transparent)
       return relLuminance(fg) > 0.5 ? Qt.rgba(0, 0, 0, 1) : Qt.rgba(1, 1, 1, 1)
-    return bar ? bar.background : Color.background
+    return bar ? bar.background : Commons.Color.background
   }
 
   // For external strings handed to shell-owned Texts we cannot force into
