@@ -1034,7 +1034,7 @@ calc_pacing() {
 }
 
 # --- Pre-checks ---
-for cmd in curl jq date dd; do
+for cmd in curl jq date base64 dd; do
     command -v "$cmd" &>/dev/null || die "Missing dependency: $cmd"
 done
 [[ -f "$CREDS" ]] || die "No credentials.\nRun <b>claude</b> to log in."
