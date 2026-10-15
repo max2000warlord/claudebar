@@ -236,23 +236,28 @@ _test_curlrc_mechanism() {
 _test_curlrc_mechanism
 
 # --- argv spy: what every curl and every jq of a full refresh cycle was given ---
-# /proc/<pid>/cmdline is world readable and /proc/<pid>/environ is not, so a
-# secret belongs in the environment or on stdin, never in an argument — and
-# that holds for jq exactly as much as for curl. The stubs record their own
-# argv; jq then execs the real jq so the script keeps working, and curl answers
+# /proc/<pid>/cmdline is world readable, so a secret never goes in an argument
+# — and that holds for jq exactly as much as for curl. Nor in the environment:
+# /proc/<pid>/environ is owner-only, but a secret still has no business in a
+# child's environment, so it travels on stdin or a pipe. The stubs record their
+# own argv and environment; jq then execs the real jq so the script keeps working, and curl answers
 # with canned bodies so the whole cycle runs: refresh, usage fetch, credits.
 # CLAUDE_JSON is the file the organization UUID comes from; the caller varies
 # it to prove the bound on that read.
-_run_spy() { # _run_spy <label> <claude-json-setup-fn>
+_run_spy() { # _run_spy <label> <claude-json-setup-fn> [extra claudebar args...]
     local label="$1" setup="$2" home real_jq
+    shift 2
     home="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     real_jq="$(command -v jq)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     mkdir -p "$home/.claude" "$home/.cache/claudebar" "$home/bin" \
         || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     SPY_CURL_ARGV="$home/curl-argv.log"; SPY_CURL_STDIN="$home/curl-stdin.log"
     SPY_JQ_ARGV="$home/jq-argv.log"; SPY_STAGE_LOG="$home/stage.log"
+    SPY_ENV="$home/child-env.log"
     : > "$SPY_CURL_ARGV"; : > "$SPY_CURL_STDIN"; : > "$SPY_JQ_ARGV"; : > "$SPY_STAGE_LOG"
+    : > "$SPY_ENV"
     { printf '#!/usr/bin/env bash\n'
+      printf 'env >> %q\n' "$SPY_ENV"
       printf 'printf "%%s " "$@" >> %q; printf "\\n" >> %q\n' "$SPY_CURL_ARGV" "$SPY_CURL_ARGV"
       printf 'cat >> %q 2>/dev/null\n' "$SPY_CURL_STDIN"
       printf 'if [[ "$*" == *oauth/token* ]]; then\n'
@@ -274,6 +279,7 @@ _run_spy() { # _run_spy <label> <claude-json-setup-fn>
     # what makes "no sentinel anywhere in argv" a readable assertion.
     { printf '#!/usr/bin/env bash\n'
       printf '{ printf "%%s\\t" "$@"; printf "\\n"; } >> %q\n' "$SPY_JQ_ARGV"
+      printf 'env >> %q\n' "$SPY_ENV"
       printf 'exec %q "$@"\n' "$real_jq"
     } > "$home/bin/jq" && chmod +x "$home/bin/jq" \
         || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
@@ -285,7 +291,7 @@ _run_spy() { # _run_spy <label> <claude-json-setup-fn>
     "$setup" "$home"
     OUT=$(run_pinned "$home" env CLAUDEBAR_TEST_NET_RETRY_DELAY=0 \
             CLAUDEBAR_TEST_NET_QUICK_BUDGET=0 CLAUDEBAR_TEST_NET_LONG_BUDGET=0 \
-            timeout 30 "$SCRIPT" --refresh); RC=$?
+            timeout 30 "$SCRIPT" --refresh "$@"); RC=$?
     [[ "$RC" -ne 124 ]] && _ok "$label: returns" || _no "$label: returns" "timed out — blocked"
     assert_exit0 "$label: exit 0"
     assert_json_valid "$label: valid JSON"
@@ -310,7 +316,7 @@ _cj_huge()  { # 5 MiB of VALID JSON: jq would parse it happily, the cap is what 
 
 _run_spy "argv spy" _cj_small
 _spy_argv=$(cat "$SPY_HOME/curl-argv.log"); _spy_stdin=$(cat "$SPY_HOME/curl-stdin.log")
-_spy_jq=$(cat "$SPY_HOME/jq-argv.log")
+_spy_jq=$(cat "$SPY_HOME/jq-argv.log"); _spy_env=$(cat "$SPY_HOME/child-env.log")
 
 # Positive controls first: a spy that captured nothing would pass every
 # "the secret is not there" assertion below without proving anything.
@@ -323,7 +329,7 @@ grep -qF -- "$SPY_REFRESH" <<< "$_spy_stdin" \
 grep -qF -- "Authorization: Bearer $SPY_NEW_ACCESS" <<< "$_spy_stdin" \
     && _ok "argv spy: the refreshed bearer DID travel, on stdin" \
     || _no "argv spy: the refreshed bearer DID travel, on stdin" "stdin log: $_spy_stdin"
-grep -qF 'claudeAiOauth.accessToken=$ENV.at' <<< "$_spy_jq" \
+grep -qF 'claudeAiOauth.accessToken=$at' <<< "$_spy_jq" \
     && _ok "argv spy: the credentials rewrite really ran" \
     || _no "argv spy: the credentials rewrite really ran" "jq log: $_spy_jq"
 grep -qF 'grant_type' <<< "$_spy_jq" \
@@ -336,14 +342,23 @@ _bad_q=$(grep -vE '^-q ' <<< "$_spy_argv" | grep . || true)
     && _ok "curl: -q is the first argument of every transfer" \
     || _no "curl: -q is the first argument of every transfer" "these did not start with -q: $_bad_q"
 
-# Neither secret may appear in ANY command line, curl's or jq's.
+grep -qE '^HOME=' <<< "$_spy_env" \
+    && _ok "env spy: the children's environments were captured" \
+    || _no "env spy: the children's environments were captured" "env log: $_spy_env"
+
+# Neither secret may appear in ANY command line, curl's or jq's — not even in
+# the base64 form jq is handed — nor in any child's environment.
 for _sentinel in "$SPY_ACCESS" "$SPY_REFRESH" "$SPY_NEW_ACCESS" "$SPY_NEW_REFRESH"; do
+    _b64=$(printf '%s' "$_sentinel" | base64 -w0)
     grep -qF -- "$_sentinel" <<< "$_spy_argv" \
         && _no "curl argv: no $_sentinel" "argv log: $_spy_argv" \
         || _ok "curl argv: no $_sentinel"
-    grep -qF -- "$_sentinel" <<< "$_spy_jq" \
-        && _no "jq argv: no $_sentinel" "jq log: $_spy_jq" \
-        || _ok "jq argv: no $_sentinel"
+    grep -qF -e "$_sentinel" -e "$_b64" <<< "$_spy_jq" \
+        && _no "jq argv: no $_sentinel (plain or base64)" "jq log: $_spy_jq" \
+        || _ok "jq argv: no $_sentinel (plain or base64)"
+    grep -qF -- "$_sentinel" <<< "$_spy_env" \
+        && _no "child env: no $_sentinel" "env log: $_spy_env" \
+        || _ok "child env: no $_sentinel"
 done
 # The credits request is the positive control for the .claude.json case below:
 # with a readable file, the organization UUID is found and the request happens.
@@ -382,6 +397,46 @@ grep -qF '/prepaid/credits' <<< "$_spy_argv" \
     && _no "5MB .claude.json: no credits request" "argv log: $_spy_argv" \
     || _ok "5MB .claude.json: no credits request"
 rm -rf "$SPY_HOME"
+
+# --- billing amounts never reach jq's argv either ---
+# Spend and prepaid balance are private to the account, and jq's
+# /proc/<pid>/cmdline is world readable like curl's. Amounts picked to be
+# greppable: $27.18 spent of a $313.37 limit, $42.00 prepaid (the curl stub's
+# credits body), so $69.18 funded. Two positive controls per run, because a
+# negative grep proves nothing on its own: the amounts ARE in the output, and
+# the spy DID log the serializer that wrote them.
+BILLING_EXTRA='{"five_hour":{"utilization":40,"resets_at":"2030-01-01T00:00:00+00:00"},"seven_day":{"utilization":20,"resets_at":"2030-01-01T00:00:00+00:00"},"extra_usage":{"is_enabled":true,"monthly_limit":31337,"used_credits":2718}}'
+_spy_billing() { # _spy_billing <label> <serializer-needle> <output-needle...> -- <argv-needle...>
+    local label="$1" ser="$2" n; shift 2
+    _spy_jq=$(cat "$SPY_HOME/jq-argv.log")
+    grep -qF -- "$ser" <<< "$_spy_jq" \
+        && _ok "$label: the spy saw the serializer" \
+        || _no "$label: the spy saw the serializer" "jq log: $_spy_jq"
+    while [[ "$1" != "--" ]]; do
+        grep -qF -- "$1" <<< "$OUT" \
+            && _ok "$label: output carries $1" \
+            || _no "$label: output carries $1" "output: $OUT"
+        shift
+    done
+    shift
+    for n in "$@"; do
+        grep -qF -- "$n" <<< "$_spy_jq" \
+            && _no "$label: jq argv has no $n" "jq log: $_spy_jq" \
+            || _ok "$label: jq argv has no $n"
+    done
+    rm -rf "$SPY_HOME"
+}
+GOOD_EXTRA=$BILLING_EXTRA _run_spy "billing spy (waybar)" _cj_small
+_spy_billing "billing spy (waybar)" '@base64d' '$27.18 / $69.18' 'Monthly limit: $313.37' \
+    -- '$27.18' '$42.00' '$69.18' '$313.37'
+GOOD_EXTRA=$BILLING_EXTRA _run_spy "billing spy (--format)" _cj_small \
+    --no-color --format '{extra_spent} of {extra_limit}'
+_spy_billing "billing spy (--format)" '@base64d' '$27.18 of $313.37' \
+    -- '$27.18' '$313.37'
+GOOD_EXTRA=$BILLING_EXTRA _run_spy "billing spy (--json)" _cj_small --json
+_spy_billing "billing spy (--json)" 'used_credit_cents' '"used_credit_cents":2718' \
+    '"available_credit_cents":4200' '"funded_credit_cents":6918' '"monthly_limit_cents":31337' \
+    -- '2718' '4200' '6918' '31337'
 
 # --- mktemp failure for the credentials temp: the refresh must not RUN ---
 # The temp is staged before the POST precisely because a 200 may rotate the

@@ -769,6 +769,18 @@ pango_escape() {
     sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' <<< "${1:-}"
 }
 
+# Hand strings to jq on STDIN (or a pipe), one base64 line each, for
+# `jq -nR '[inputs | @base64d]'`. For tokens and for text that may carry billing
+# amounts: as an argument it would sit in jq's /proc/<pid>/cmdline, which every
+# local user can read, and the environment is no place for them either. Base64 and
+# not raw text: jq 1.7 reads raw input in 4 KiB blocks and mangles a UTF-8
+# character split across two of them, while @base64d decodes the whole string
+# at once, exactly like `--arg` (invalid UTF-8 included).
+b64_lines() {  # b64_lines <string>...
+    local s
+    for s in "$@"; do printf '%s' "$s" | base64 -w0; printf '\n'; done
+}
+
 # Strip color from Pango markup while keeping everything structural: only the
 # painting attributes go, so <span font_weight='bold'> stays bold, glyphs, bar
 # fill characters, markers and box drawing are untouched, and an attribute-less
@@ -1022,7 +1034,7 @@ calc_pacing() {
 }
 
 # --- Pre-checks ---
-for cmd in curl jq date dd; do
+for cmd in curl jq date base64 dd; do
     command -v "$cmd" &>/dev/null || die "Missing dependency: $cmd"
 done
 [[ -f "$CREDS" ]] || die "No credentials.\nRun <b>claude</b> to log in."
@@ -1379,14 +1391,16 @@ if [[ -n "$cred_tmp" ]]; then
     # Synchronous refresh — 25s timeout covers cold boot when DHCP is still settling.
     # Transient failures (no HTTP response) are retried until the shared deadline —
     # same policy as the usage fetch — so a cold-boot race doesn't cost a full interval.
-    # The refresh token goes to jq through the ENVIRONMENT, not through
-    # `--arg`: an argument sits in jq's own /proc/<pid>/cmdline, which is world
+    # The refresh token goes to jq on STDIN (b64_lines), not through `--arg`:
+    # an argument sits in jq's own /proc/<pid>/cmdline, which is world
     # readable, and moving the secret out of curl's argv while leaving it in
-    # jq's argv moves nothing. /proc/<pid>/environ is readable by the owner of
-    # the process only. $CLIENT_ID stays an argument — it is the public Claude
-    # CLI client ID, not a secret.
-    refresh_body=$(rt="$refresh_token" jq -nc --arg ci "$CLIENT_ID" \
-                     '{grant_type:"refresh_token", client_id:$ci, refresh_token:$ENV.rt}')
+    # jq's argv moves nothing. Not the environment either: a secret has no
+    # business in a child's environment, owner-only or not. Base64 because the
+    # stored refresh token is not validated, so nothing promises it is ASCII.
+    # $CLIENT_ID stays an argument — it is the public Claude CLI client ID,
+    # not a secret.
+    refresh_body=$(b64_lines "$refresh_token" | jq -nRc --arg ci "$CLIENT_ID" \
+                     '{grant_type:"refresh_token", client_id:$ci, refresh_token:(input | @base64d)}')
     while :; do
         # The secret here is the POST BODY, not a header: `--data "$refresh_body"`
         # puts the refresh token straight into argv. `--data @-` reads it from
@@ -1438,13 +1452,20 @@ if [[ -n "$cred_tmp" ]]; then
         # landing inside it still gets clobbered.
         current=$(read_bounded "$CREDS" "$MAX_STATE_BYTES") || current=""
         if [[ "$current" == "$creds" ]] && ! read_was_truncated "$current" "$MAX_STATE_BYTES"; then
-            # Both tokens reach jq through the environment for the same reason
-            # as the request body above: `--arg at "$access_token"` publishes
-            # the fresh bearer in jq's command line to every process of this
-            # user. The expiry is a number and public, so it stays an argument.
-            at="$access_token" rt="${new_refresh:-$refresh_token}" \
+            # Both tokens reach jq through a pipe, for the same reason as the
+            # request body above: `--arg at "$access_token"` publishes the
+            # fresh bearer in jq's command line to every local user. stdin
+            # already carries the credentials document, so the tokens come in
+            # on a process substitution — argv shows only /dev/fd/N. The
+            # expiry is a number and public, so it stays an argument. An empty
+            # $at can only mean the pipe failed (the bearer passed
+            # token_is_safe, so it is never empty): jq errors out, and the
+            # chain below drops the temp instead of writing a blank token.
             jq --argjson ea "$new_expires_at" \
-               '.claudeAiOauth.accessToken=$ENV.at | .claudeAiOauth.refreshToken=$ENV.rt | .claudeAiOauth.expiresAt=$ea' \
+               --rawfile tokens <(b64_lines "$access_token" "${new_refresh:-$refresh_token}") \
+               '($tokens | split("\n") | map(@base64d)) as [$at, $rt]
+                | if ($at // "") == "" then error("token pipe failed") else . end
+                | .claudeAiOauth.accessToken=$at | .claudeAiOauth.refreshToken=$rt | .claudeAiOauth.expiresAt=$ea' \
                <<< "$creds" > "$cred_tmp" && mv "$cred_tmp" "$CREDS" \
                || rm -f "$cred_tmp" 2>/dev/null || true
         else
@@ -1886,14 +1907,17 @@ if [[ "$JSON_MODE" == "true" ]]; then
             _json_funded=$local_funded
             _json_extra_pct=$extra_pct_value
         fi
-        _json_extra=$(jq -nc \
-            --argjson used "$local_used" --argjson limit "$local_limit" \
-            --argjson available "$_json_available" --argjson funded "$_json_funded" \
-            --argjson known "$extra_balance_known" --argjson pct "$_json_extra_pct" \
-            --arg state "$(severity_for "$extra_pct_value")" \
-            '{used_credit_cents:$used, available_credit_cents:$available,
-              funded_credit_cents:$funded, monthly_limit_cents:$limit,
-              balance_known:$known, used_pct:$pct, state:$state}')
+        # The amounts go to jq on STDIN, never as `--argjson`: an argument sits
+        # in jq's /proc/<pid>/cmdline, which every local user can read, and
+        # spend and prepaid balance are the account's private billing data.
+        # Every value is already a JSON literal (an integer from `floor`, null,
+        # true/false, or a GAUGE_STATES word), so printf only joins them.
+        _json_extra=$(printf '{"used":%s,"limit":%s,"available":%s,"funded":%s,"known":%s,"pct":%s,"state":"%s"}' \
+            "$local_used" "$local_limit" "$_json_available" "$_json_funded" \
+            "$extra_balance_known" "$_json_extra_pct" "$(severity_for "$extra_pct_value")" |
+            jq -c '{used_credit_cents:.used, available_credit_cents:.available,
+                    funded_credit_cents:.funded, monthly_limit_cents:.limit,
+                    balance_known:.known, used_pct:.pct, state:.state}')
     fi
 
     _json_updated=""
@@ -1923,8 +1947,11 @@ if [[ "$JSON_MODE" == "true" ]]; then
         { read -r _le_code || true; read -r _le_msg || true; } \
             < <(read_bounded "$CACHE_DIR/.last_error" "$MAX_STATE_BYTES" 2>/dev/null) || true
         if [[ -n "$_le_code" && "$_le_code" =~ ^[0-9]+$ && "$_le_code" != "000" ]]; then
-            _json_last_error=$(jq -nc --argjson c "$_le_code" --arg m "$_le_msg" \
-                '{http_status:$c, message:(if $m == "" then ("HTTP " + ($c|tostring)) else $m end)}')
+            # The message is the server's own free text, so it may name an
+            # amount: stdin (b64_lines), like the Waybar tooltip that shows it.
+            _json_last_error=$(b64_lines "$_le_msg" | jq -nRc --argjson c "$_le_code" \
+                'input | @base64d as $m
+                 | {http_status:$c, message:(if $m == "" then ("HTTP " + ($c|tostring)) else $m end)}')
         fi
     fi
 
@@ -1942,26 +1969,29 @@ if [[ "$JSON_MODE" == "true" ]]; then
         split("\n") | map(select(length > 0) | split(" ")
                           | {pct: (.[0] | tonumber), color: .[1]})')
 
-    jq -nc \
-        --arg plan "$plan" --arg state "$class" --argjson max_pct "$max_pct" \
+    # extra_usage carries the billing amounts and last_error the server's free
+    # text, so both travel on stdin like above, not in argv. max_pct goes with
+    # them: it is the one other field that can be read off the extra-usage
+    # percent. All three are already JSON.
+    printf '{"extra":%s,"max_pct":%s,"last_error":%s}' "$_json_extra" "$max_pct" "$_json_last_error" |
+    jq -c \
+        --arg plan "$plan" --arg state "$class" \
         --arg pal_low "$BAR_COLOR_LOW" --arg pal_mid "$BAR_COLOR_MID" \
         --arg pal_high "$BAR_COLOR_HIGH" --arg pal_critical "$BAR_COLOR_CRITICAL" \
         --argjson pal_stops "$_json_stops" \
         --argjson windows "$_json_windows" \
-        --argjson extra "$_json_extra" \
         --arg updated "$_json_updated" --argjson age "$_json_age" \
         --argjson stale "$_json_stale" --arg stale_reason "$_json_stale_reason" \
-        --argjson last_error "$_json_last_error" \
         '{schema_version:2, error:null, loading:false,
-          plan:$plan, state:$state, max_pct:$max_pct,
-          windows:$windows, extra_usage:$extra,
+          plan:$plan, state:$state, max_pct:.max_pct,
+          windows:$windows, extra_usage:.extra,
           palette:{low:$pal_low, mid:$pal_mid, high:$pal_high, critical:$pal_critical,
                    stops:$pal_stops},
           stale:$stale,
           stale_reason:(if $stale_reason == "" then null else $stale_reason end),
           updated_at:(if $updated == "" then null else $updated end),
           data_age_seconds:$age,
-          last_error:$last_error}'
+          last_error:.last_error}'
     exit 0
 fi
 
@@ -2374,5 +2404,8 @@ if [[ "$TOOLTIP_PLAIN" == "true" ]]; then
 fi
 
 # --- Output waybar JSON ---
-jq -nc --arg text "$bar_text" --arg tooltip "$t" --arg class "$class" \
-    '{text:$text, tooltip:$tooltip, class:$class}'
+# Text and tooltip go to jq on stdin (b64_lines), not as `--arg`: both can show
+# the extra-usage amounts — the tooltip section, the {extra_*} placeholders.
+b64_lines "$bar_text" "$t" |
+    jq -nRc --arg class "$class" \
+        '[inputs | @base64d] as [$text, $tooltip] | {text:$text, tooltip:$tooltip, class:$class}'
