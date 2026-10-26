@@ -125,15 +125,16 @@ set -euo pipefail
 # exactly this case. LC_CTYPE alone is the surgical fix: it governs character
 # classification, and leaves collation and number formatting to the user.
 if [[ "$(locale charmap 2>/dev/null)" != "UTF-8" ]]; then
-    # LC_ALL outranks LC_CTYPE, so it has to go first — otherwise the override
-    # below is silently ignored. Dropping it here affects only this process.
-    unset LC_ALL
-    for _loc in C.UTF-8 C.utf8 en_US.UTF-8; do
-        if LC_CTYPE="$_loc" locale charmap 2>/dev/null | grep -qx "UTF-8"; then
-            export LC_CTYPE="$_loc"; break
-        fi
-    done
-    unset _loc
+  # LC_ALL outranks LC_CTYPE, so it has to go first — otherwise the override
+  # below is silently ignored. Dropping it here affects only this process.
+  unset LC_ALL
+  for _loc in C.UTF-8 C.utf8 en_US.UTF-8; do
+    if LC_CTYPE="$_loc" locale charmap 2>/dev/null | grep -qx "UTF-8"; then
+      export LC_CTYPE="$_loc"
+      break
+    fi
+  done
+  unset _loc
 fi
 
 # --- Parse args ---
@@ -169,38 +170,39 @@ for _a in "$@"; do [[ "$_a" == "--json" ]] && JSON_MODE=true && break; done
 # message goes through --arg, which handles quotes and control characters.
 # The Waybar shape reproduces the pre-existing inline output byte-for-byte.
 cli_error() {
-    if [[ "$JSON_MODE" == "true" ]]; then
-        if command -v jq &>/dev/null; then
-            jq -nc --arg m "$1" \
-                '{schema_version:2, error:{message:$m}, loading:false, windows:[], extra_usage:null}'
-        else
-            printf '{"schema_version":2,"error":{"message":"invalid arguments"},"loading":false,"windows":[],"extra_usage":null}\n'
-        fi
+  if [[ "$JSON_MODE" == "true" ]]; then
+    if command -v jq &>/dev/null; then
+      jq -nc --arg m "$1" \
+        '{schema_version:2, error:{message:$m}, loading:false, windows:[], extra_usage:null}'
     else
-        local _m="${1//\\/\\\\}"; _m="${_m//\"/\\\"}"
-        printf '{"text":"⚠","tooltip":"%s","class":"critical"}\n' "$_m"
+      printf '{"schema_version":2,"error":{"message":"invalid arguments"},"loading":false,"windows":[],"extra_usage":null}\n'
     fi
-    exit 0
+  else
+    local _m="${1//\\/\\\\}"
+    _m="${_m//\"/\\\"}"
+    printf '{"text":"⚠","tooltip":"%s","class":"critical"}\n' "$_m"
+  fi
+  exit 0
 }
 
 # Accept the hex forms a color source may legitimately use: #rgb, #rgba,
 # #rrggbb, #rrggbbaa. Anything else (color names, gradients, junk) is rejected
 # so a malformed theme or pywal cache can never reach the blending math.
 is_hex_color() {
-    [[ "$1" =~ ^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$ ]]
+  [[ "$1" =~ ^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$ ]]
 }
 
 # Reduce any accepted hex form to #rrggbb: shorthand is expanded, alpha is
 # dropped (the widget composites on the bar's own background). Prints nothing
 # and returns 1 for values is_hex_color would reject, so callers can guard.
 normalize_hex() {
-    local h="${1#\#}"
-    case "${#h}" in
-        3|4) printf '#%s%s%s%s%s%s' "${h:0:1}" "${h:0:1}" "${h:1:1}" "${h:1:1}" "${h:2:1}" "${h:2:1}" ;;
-        6|8) printf '#%s' "${h:0:6}" ;;
-        *)   return 1 ;;
-    esac
-    return 0
+  local h="${1#\#}"
+  case "${#h}" in
+  3 | 4) printf '#%s%s%s%s%s%s' "${h:0:1}" "${h:0:1}" "${h:1:1}" "${h:1:1}" "${h:2:1}" "${h:2:1}" ;;
+  6 | 8) printf '#%s' "${h:0:6}" ;;
+  *) return 1 ;;
+  esac
+  return 0
 }
 
 # A --color-* value is interpolated into a single-quoted Pango attribute, so it
@@ -208,7 +210,7 @@ normalize_hex() {
 # Pango/X11 color name ("red", "tomato"), which the flag has always accepted.
 # Anything else is an argument error rather than injected markup.
 valid_color_spec() {
-    is_hex_color "$1" || [[ "$1" =~ ^[A-Za-z][A-Za-z0-9]*$ ]]
+  is_hex_color "$1" || [[ "$1" =~ ^[A-Za-z][A-Za-z0-9]*$ ]]
 }
 
 # --help / -h: the reference the user needs is already the header comment of
@@ -217,62 +219,107 @@ valid_color_spec() {
 # comment, with the leading "# " stripped. Plain text on stdout, exit 0 —
 # --json does not apply: a human asked.
 show_help() {
-    awk '/^# Usage:/ { p = 1 }
+  awk '/^# Usage:/ { p = 1 }
          p && !/^#/  { exit }
          p           { sub(/^#( |$)/, ""); print }' "${BASH_SOURCE[0]}"
-    exit 0
+  exit 0
 }
 
 while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --help|-h) show_help ;;
-        --icon)
-            [[ $# -ge 2 ]] || cli_error "--icon requires a value"
-            BAR_ICON="$2"; shift 2 ;;
-        --format)
-            [[ $# -ge 2 ]] || cli_error "--format requires a value"
-            FORMAT="$2"; FORMAT_SET=true; shift 2 ;;
-        --tooltip-format)
-            [[ $# -ge 2 ]] || cli_error "--tooltip-format requires a value"
-            TOOLTIP_FORMAT="$2"; shift 2 ;;
-        --pace-tolerance)
-            [[ $# -ge 2 ]] || cli_error "--pace-tolerance requires a value"
-            PACE_TOLERANCE="$2"; shift 2 ;;
-        --format-pace-color) FORMAT_PACE_COLOR=true; shift ;;
-        --tooltip-pace-pts) TOOLTIP_PACE_PTS=true; shift ;;
-        --remaining) REMAINING=true; shift ;;
-        --json) shift ;;  # already picked up by the pre-scan
-        --refresh) FORCE_REFRESH=true; shift ;;
-        --no-color) NO_COLOR_SET=true; NO_COLOR_WHAT="all"; shift ;;
-        --no-color=*)
-            NO_COLOR_SET=true; NO_COLOR_WHAT="${1#*=}"
-            case "$NO_COLOR_WHAT" in
-                all|bar|tooltip) ;;
-                *) cli_error "--no-color must be all, bar, or tooltip" ;;
-            esac
-            shift ;;
-        --tooltip-font) [[ $# -ge 2 ]] || cli_error "--tooltip-font requires a value"
-                        TOOLTIP_FONT="$2"; shift 2 ;;
-        # Deprecados. --frame dibujaba una caja alrededor del tooltip; se fue.
-        # Se siguen aceptando para no romper una config que ya los tenga:
-        # --frame no hace nada, --frame-font es un alias de --tooltip-font.
-        --frame) shift ;;
-        --frame-font) [[ $# -ge 2 ]] || cli_error "--frame-font requires a value"
-                      TOOLTIP_FONT="$2"; shift 2 ;;
-        --color-low)       [[ $# -ge 2 ]] || cli_error "--color-low requires a value"
-                           valid_color_spec "$2" || cli_error "--color-low must be a hex color (#RGB/#RRGGBB) or a color name"
-                           BAR_COLOR_LOW="$2"; shift 2 ;;
-        --color-mid)       [[ $# -ge 2 ]] || cli_error "--color-mid requires a value"
-                           valid_color_spec "$2" || cli_error "--color-mid must be a hex color (#RGB/#RRGGBB) or a color name"
-                           BAR_COLOR_MID="$2"; shift 2 ;;
-        --color-high)      [[ $# -ge 2 ]] || cli_error "--color-high requires a value"
-                           valid_color_spec "$2" || cli_error "--color-high must be a hex color (#RGB/#RRGGBB) or a color name"
-                           BAR_COLOR_HIGH="$2"; shift 2 ;;
-        --color-critical)  [[ $# -ge 2 ]] || cli_error "--color-critical requires a value"
-                           valid_color_spec "$2" || cli_error "--color-critical must be a hex color (#RGB/#RRGGBB) or a color name"
-                           BAR_COLOR_CRITICAL="$2"; shift 2 ;;
-        *) cli_error "Unknown option: $1" ;;
+  case "$1" in
+  --help | -h) show_help ;;
+  --icon)
+    [[ $# -ge 2 ]] || cli_error "--icon requires a value"
+    BAR_ICON="$2"
+    shift 2
+    ;;
+  --format)
+    [[ $# -ge 2 ]] || cli_error "--format requires a value"
+    FORMAT="$2"
+    FORMAT_SET=true
+    shift 2
+    ;;
+  --tooltip-format)
+    [[ $# -ge 2 ]] || cli_error "--tooltip-format requires a value"
+    TOOLTIP_FORMAT="$2"
+    shift 2
+    ;;
+  --pace-tolerance)
+    [[ $# -ge 2 ]] || cli_error "--pace-tolerance requires a value"
+    PACE_TOLERANCE="$2"
+    shift 2
+    ;;
+  --format-pace-color)
+    FORMAT_PACE_COLOR=true
+    shift
+    ;;
+  --tooltip-pace-pts)
+    TOOLTIP_PACE_PTS=true
+    shift
+    ;;
+  --remaining)
+    REMAINING=true
+    shift
+    ;;
+  --json) shift ;; # already picked up by the pre-scan
+  --refresh)
+    FORCE_REFRESH=true
+    shift
+    ;;
+  --no-color)
+    NO_COLOR_SET=true
+    NO_COLOR_WHAT="all"
+    shift
+    ;;
+  --no-color=*)
+    NO_COLOR_SET=true
+    NO_COLOR_WHAT="${1#*=}"
+    case "$NO_COLOR_WHAT" in
+    all | bar | tooltip) ;;
+    *) cli_error "--no-color must be all, bar, or tooltip" ;;
     esac
+    shift
+    ;;
+  --tooltip-font)
+    [[ $# -ge 2 ]] || cli_error "--tooltip-font requires a value"
+    TOOLTIP_FONT="$2"
+    shift 2
+    ;;
+  # Deprecados. --frame dibujaba una caja alrededor del tooltip; se fue.
+  # Se siguen aceptando para no romper una config que ya los tenga:
+  # --frame no hace nada, --frame-font es un alias de --tooltip-font.
+  --frame) shift ;;
+  --frame-font)
+    [[ $# -ge 2 ]] || cli_error "--frame-font requires a value"
+    TOOLTIP_FONT="$2"
+    shift 2
+    ;;
+  --color-low)
+    [[ $# -ge 2 ]] || cli_error "--color-low requires a value"
+    valid_color_spec "$2" || cli_error "--color-low must be a hex color (#RGB/#RRGGBB) or a color name"
+    BAR_COLOR_LOW="$2"
+    shift 2
+    ;;
+  --color-mid)
+    [[ $# -ge 2 ]] || cli_error "--color-mid requires a value"
+    valid_color_spec "$2" || cli_error "--color-mid must be a hex color (#RGB/#RRGGBB) or a color name"
+    BAR_COLOR_MID="$2"
+    shift 2
+    ;;
+  --color-high)
+    [[ $# -ge 2 ]] || cli_error "--color-high requires a value"
+    valid_color_spec "$2" || cli_error "--color-high must be a hex color (#RGB/#RRGGBB) or a color name"
+    BAR_COLOR_HIGH="$2"
+    shift 2
+    ;;
+  --color-critical)
+    [[ $# -ge 2 ]] || cli_error "--color-critical requires a value"
+    valid_color_spec "$2" || cli_error "--color-critical must be a hex color (#RGB/#RRGGBB) or a color name"
+    BAR_COLOR_CRITICAL="$2"
+    shift 2
+    ;;
+  *) cli_error "Unknown option: $1" ;;
+  esac
 done
 [[ "$PACE_TOLERANCE" =~ ^[0-9]+$ ]] || cli_error "--pace-tolerance must be a non-negative integer"
 
@@ -282,14 +329,17 @@ done
 # tooltip. Only presentation is affected: the Waybar `class` field and the
 # --json payload are machine contracts and stay exactly as they are.
 if [[ "$NO_COLOR_SET" != "true" && -n "${NO_COLOR:-}" ]]; then
-    NO_COLOR_WHAT="all"
+  NO_COLOR_WHAT="all"
 fi
 BAR_PLAIN=false
 TOOLTIP_PLAIN=false
 case "$NO_COLOR_WHAT" in
-    all)     BAR_PLAIN=true; TOOLTIP_PLAIN=true ;;
-    bar)     BAR_PLAIN=true ;;
-    tooltip) TOOLTIP_PLAIN=true ;;
+all)
+  BAR_PLAIN=true
+  TOOLTIP_PLAIN=true
+  ;;
+bar) BAR_PLAIN=true ;;
+tooltip) TOOLTIP_PLAIN=true ;;
 esac
 PACE_TOLERANCE=$((10#$PACE_TOLERANCE))
 # In remaining mode, default the bar to "what's left" unless the user set their own format.
@@ -300,7 +350,7 @@ API_URL="https://api.anthropic.com/api/oauth/usage"
 API_BASE_URL="https://api.anthropic.com"
 TOKEN_URL="https://platform.claude.com/v1/oauth/token"
 CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e" # Claude CLI OAuth client ID
-REFRESH_BUFFER=300 # refresh 5 min before expiry
+REFRESH_BUFFER=300                               # refresh 5 min before expiry
 CACHE_DIR="$HOME/.cache/claudebar"
 CACHE_TTL=60 # seconds
 
@@ -340,9 +390,9 @@ MAX_CLAUDE_JSON_BYTES=$((4 * 1024 * 1024))
 # rejects the common case cheaply and reports failure to the caller; the flag
 # is what closes the window behind it. `status=none` silences the transfer
 # counts only — a read error still prints, hence the redirect.
-read_bounded() { # read_bounded PATH MAXBYTES
-    [[ -f "$1" ]] || return 1 # -f is false for FIFO, socket, directory and device
-    LC_ALL=C dd if="$1" iflag=nonblock bs="$2" count=1 status=none 2>/dev/null
+read_bounded() {            # read_bounded PATH MAXBYTES
+  [[ -f "$1" ]] || return 1 # -f is false for FIFO, socket, directory and device
+  LC_ALL=C dd if="$1" iflag=nonblock bs="$2" count=1 status=none 2>/dev/null
 }
 
 # True when a captured HTTP body reached MAX_RESP_BYTES. `>=`, not `>`: curl
@@ -352,8 +402,8 @@ read_bounded() { # read_bounded PATH MAXBYTES
 # multibyte flood would measure up to 4x short. bash restores the locale on
 # return, so nothing else in the script sees C collation.
 resp_too_big() { # resp_too_big BODY
-    local LC_ALL=C
-    ((${#1} >= MAX_RESP_BYTES))
+  local LC_ALL=C
+  ((${#1} >= MAX_RESP_BYTES))
 }
 
 # Same measurement for a bounded FILE read: read_bounded returns exactly
@@ -361,8 +411,8 @@ resp_too_big() { # resp_too_big BODY
 # `local LC_ALL=C` for the same reason as above — under a UTF-8 locale ${#var}
 # counts characters, and bash restores the locale on return.
 read_was_truncated() { # read_was_truncated CONTENT MAXBYTES
-    local LC_ALL=C
-    ((${#1} >= $2))
+  local LC_ALL=C
+  ((${#1} >= $2))
 }
 
 # The bearer token is the one untrusted value that reaches curl's CONFIG
@@ -374,15 +424,15 @@ read_was_truncated() { # read_was_truncated CONTENT MAXBYTES
 # a bearer with a line break in it is not a token, it is a tampered file — so
 # this rejects instead. The alphabet is RFC 6750's for a bearer credential.
 token_is_safe() { # token_is_safe TOKEN
-    [[ "$1" =~ ^[A-Za-z0-9._~+/=-]+$ ]]
+  [[ "$1" =~ ^[A-Za-z0-9._~+/=-]+$ ]]
 }
 
 # The ONLY place a curl config file is built, so the check above cannot be
 # skipped by a future call site. Prints nothing and returns 1 for a token that
 # must not reach curl.
 curl_auth_cfg() { # curl_auth_cfg TOKEN
-    token_is_safe "$1" || return 1
-    printf 'header = "Authorization: Bearer %s"\nheader = "anthropic-beta: oauth-2025-04-20"\n' "$1"
+  token_is_safe "$1" || return 1
+  printf 'header = "Authorization: Bearer %s"\nheader = "anthropic-beta: oauth-2025-04-20"\n' "$1"
 }
 
 # Every curl below starts with `-q`, and it has to be the FIRST argument. curl
@@ -408,7 +458,7 @@ curl_auth_cfg() { # curl_auth_cfg TOKEN
 # descriptor to check first; the residual window there is one truncating write
 # of a two-line diagnostic, so the cheap check is worth more than the rewrite.
 writable_path() { # writable_path PATH
-    [[ ! -e "$1" || -f "$1" ]]
+  [[ ! -e "$1" || -f "$1" ]]
 }
 
 # Seconds to wait from a response header block, 0 when there is nothing to
@@ -418,33 +468,40 @@ writable_path() { # writable_path PATH
 # header wins: `-D` writes every block of the exchange (a 1xx before the
 # final answer included), and the final answer is the one that asked.
 _retry_after_seconds() { # _retry_after_seconds HEADER_BLOCK
-    local _raw _secs _now
-    _raw=$(printf '%s' "$1" | grep -i '^retry-after:' | tail -n1 | tr -d '\r' \
-           | sed 's/^[^:]*:[[:space:]]*//') || true
-    _raw="${_raw#"${_raw%%[![:space:]]*}"}"
-    _raw="${_raw%"${_raw##*[![:space:]]}"}"
-    [[ -n "$_raw" ]] || { printf '0'; return 0; }
-    # Decimal on purpose: bash reads a leading zero as octal (`010` is 8 and
-    # `08` is an arithmetic error), and a value past nine digits overflows
-    # before the clamp below can see it — it IS the clamp.
-    if [[ "$_raw" =~ ^0*([0-9]{1,9})$ ]]; then
-        _secs=${BASH_REMATCH[1]}
-    elif [[ "$_raw" =~ ^[0-9]+$ ]]; then
-        _secs=$RETRY_AFTER_MAX
-    elif [[ "$_raw" =~ ^[A-Z][a-z]{2},\ [0-9]{2}\ [A-Z][a-z]{2}\ [0-9]{4}\ [0-9]{2}:[0-9]{2}:[0-9]{2}\ GMT$ ]]; then
-        # Only the IMF-fixdate form reaches `date -d`. Its parser takes a
-        # `TZ="/path"` prefix and glibc opens that path as a tzfile: a FIFO
-        # there parks the script for ever. The shape check keeps the header a
-        # date; stdin is closed so no descriptor is inherited either.
-        _now=$(date +%s)
-        _secs=$(LC_ALL=C date -d "$_raw" +%s 2>/dev/null </dev/null) || { printf '0'; return 0; }
-        _secs=$(( _secs - _now ))
-    else
-        printf '0'; return 0
-    fi
-    (( _secs < 0 )) && _secs=0
-    (( _secs > RETRY_AFTER_MAX )) && _secs=$RETRY_AFTER_MAX
-    printf '%s' "$_secs"
+  local _raw _secs _now
+  _raw=$(printf '%s' "$1" | grep -i '^retry-after:' | tail -n1 | tr -d '\r' |
+    sed 's/^[^:]*:[[:space:]]*//') || true
+  _raw="${_raw#"${_raw%%[![:space:]]*}"}"
+  _raw="${_raw%"${_raw##*[![:space:]]}"}"
+  [[ -n "$_raw" ]] || {
+    printf '0'
+    return 0
+  }
+  # Decimal on purpose: bash reads a leading zero as octal (`010` is 8 and
+  # `08` is an arithmetic error), and a value past nine digits overflows
+  # before the clamp below can see it — it IS the clamp.
+  if [[ "$_raw" =~ ^0*([0-9]{1,9})$ ]]; then
+    _secs=${BASH_REMATCH[1]}
+  elif [[ "$_raw" =~ ^[0-9]+$ ]]; then
+    _secs=$RETRY_AFTER_MAX
+  elif [[ "$_raw" =~ ^[A-Z][a-z]{2},\ [0-9]{2}\ [A-Z][a-z]{2}\ [0-9]{4}\ [0-9]{2}:[0-9]{2}:[0-9]{2}\ GMT$ ]]; then
+    # Only the IMF-fixdate form reaches `date -d`. Its parser takes a
+    # `TZ="/path"` prefix and glibc opens that path as a tzfile: a FIFO
+    # there parks the script for ever. The shape check keeps the header a
+    # date; stdin is closed so no descriptor is inherited either.
+    _now=$(date +%s)
+    _secs=$(LC_ALL=C date -d "$_raw" +%s 2>/dev/null </dev/null) || {
+      printf '0'
+      return 0
+    }
+    _secs=$((_secs - _now))
+  else
+    printf '0'
+    return 0
+  fi
+  ((_secs < 0)) && _secs=0
+  ((_secs > RETRY_AFTER_MAX)) && _secs=$RETRY_AFTER_MAX
+  printf '%s' "$_secs"
 }
 
 # Stage in the cache dir, then rename onto the target: a sibling instance
@@ -453,16 +510,16 @@ _retry_after_seconds() { # _retry_after_seconds HEADER_BLOCK
 # makes mv fail on a directory instead of moving the temp INTO it. Returns 1
 # when nothing is on disk, so a caller never announces a wait it did not keep.
 write_atomic() { # write_atomic TARGET TEMPLATE CONTENT
-    local _t
-    _t=$(mktemp "$CACHE_DIR/$2" 2>/dev/null) || return 1
-    if printf '%s' "$3" > "$_t" 2>/dev/null && mv -fT -- "$_t" "$1" 2>/dev/null; then
-        return 0
-    fi
-    rm -f "$_t" 2>/dev/null || true
-    return 1
+  local _t
+  _t=$(mktemp "$CACHE_DIR/$2" 2>/dev/null) || return 1
+  if printf '%s' "$3" >"$_t" 2>/dev/null && mv -fT -- "$_t" "$1" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$_t" 2>/dev/null || true
+  return 1
 }
 persist_retry_at() { # persist_retry_at EPOCH
-    write_atomic "$retry_at_marker" ".retry_at.XXXXXX" "$1"
+  write_atomic "$retry_at_marker" ".retry_at.XXXXXX" "$1"
 }
 
 # Transient (no-HTTP-response) failures retry on a deadline budget, not a fixed
@@ -484,53 +541,55 @@ NET_WAIT_RECENT=45     # .net_wait younger than this → a sibling already waite
 
 # Blend two hex colors (#RRGGBB) by averaging their RGB components
 hex_blend() {
-    local c1="${1#\#}" c2="${2#\#}"
-    local r1=$((16#${c1:0:2})) g1=$((16#${c1:2:2})) b1=$((16#${c1:4:2}))
-    local r2=$((16#${c2:0:2})) g2=$((16#${c2:2:2})) b2=$((16#${c2:4:2}))
-    printf '#%02x%02x%02x' $(( (r1+r2)/2 )) $(( (g1+g2)/2 )) $(( (b1+b2)/2 ))
+  local c1="${1#\#}" c2="${2#\#}"
+  local r1=$((16#${c1:0:2})) g1=$((16#${c1:2:2})) b1=$((16#${c1:4:2}))
+  local r2=$((16#${c2:0:2})) g2=$((16#${c2:2:2})) b2=$((16#${c2:4:2}))
+  printf '#%02x%02x%02x' $(((r1 + r2) / 2)) $(((g1 + g2) / 2)) $(((b1 + b2) / 2))
 }
 
 # Linear interpolation between two #RRGGBB colors; t in integer thousandths
 # (0..1000). Integer math only, components stay within the endpoints.
 hex_lerp() {
-    local c1="${1#\#}" c2="${2#\#}" t=$3
-    local r1=$((16#${c1:0:2})) g1=$((16#${c1:2:2})) b1=$((16#${c1:4:2}))
-    local r2=$((16#${c2:0:2})) g2=$((16#${c2:2:2})) b2=$((16#${c2:4:2}))
-    printf '#%02x%02x%02x' \
-        $(( r1 + (r2 - r1) * t / 1000 )) \
-        $(( g1 + (g2 - g1) * t / 1000 )) \
-        $(( b1 + (b2 - b1) * t / 1000 ))
+  local c1="${1#\#}" c2="${2#\#}" t=$3
+  local r1=$((16#${c1:0:2})) g1=$((16#${c1:2:2})) b1=$((16#${c1:4:2}))
+  local r2=$((16#${c2:0:2})) g2=$((16#${c2:2:2})) b2=$((16#${c2:4:2}))
+  printf '#%02x%02x%02x' \
+    $((r1 + (r2 - r1) * t / 1000)) \
+    $((g1 + (g2 - g1) * t / 1000)) \
+    $((b1 + (b2 - b1) * t / 1000))
 }
 
 # Assign a validated, normalized color to a variable by name. Silently keeps
 # the variable's current value when the candidate isn't a usable hex color —
 # that is the "missing key keeps the built-in default" rule, applied uniformly
 # to every color source.
-set_color_var() {  # <var-name> <candidate>
-    local _norm
-    is_hex_color "${2:-}" || return 0
-    _norm=$(normalize_hex "$2") || return 0
-    printf -v "$1" '%s' "$_norm"
-    return 0
+set_color_var() { # <var-name> <candidate>
+  local _norm
+  is_hex_color "${2:-}" || return 0
+  _norm=$(normalize_hex "$2") || return 0
+  printf -v "$1" '%s' "$_norm"
+  return 0
 }
 
 # Try each candidate in order and keep the first that is a usable color, so a
 # malformed value never suppresses a valid fallback behind it.
-set_color_var_first() {  # <var-name> <candidate>...
-    local var="$1"; shift
-    local c
-    for c in "$@"; do
-        [[ -n "$c" ]] || continue
-        is_hex_color "$c" || continue
-        set_color_var "$var" "$c"
-        return 0
-    done
+set_color_var_first() { # <var-name> <candidate>...
+  local var="$1"
+  shift
+  local c
+  for c in "$@"; do
+    [[ -n "$c" ]] || continue
+    is_hex_color "$c" || continue
+    set_color_var "$var" "$c"
     return 0
+  done
+  return 0
 }
 
-# Which source painted the palette: "omarchy", "pywal", or "" for built-ins.
-# pywal is consulted only when no Omarchy theme was found; it never overrides
-# Omarchy, and neither overrides explicit --color-* flags (applied later).
+# Which source painted the palette: "omarchy", "matugen", "pywal", or "" for
+# built-ins. Matugen and then pywal are consulted only when no source above
+# them was found; none overrides the one before it, and none overrides
+# explicit --color-* flags (applied later).
 THEME_SOURCE=""
 
 # Locate the active Omarchy theme's colors.toml. Current Omarchy keeps the
@@ -538,101 +597,245 @@ THEME_SOURCE=""
 # reads); older layouts kept it under ~/.config. Try both, newest first, so
 # theming works on either without the user configuring anything.
 theme_colors_file() {
-    local p
-    for p in "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current/theme/colors.toml" \
-             "$HOME/.config/omarchy/current/theme/colors.toml"; do
-        [[ -f "$p" ]] && { printf '%s' "$p"; return 0; }
-    done
-    # No theme installed (plain Waybar user): print nothing, and exit 0 —
-    # a non-zero status here would abort the whole script under `set -e`.
-    return 0
+  local p
+  for p in "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current/theme/colors.toml" \
+    "$HOME/.config/omarchy/current/theme/colors.toml"; do
+    [[ -f "$p" ]] && {
+      printf '%s' "$p"
+      return 0
+    }
+  done
+  # No theme installed (plain Waybar user): print nothing, and exit 0 —
+  # a non-zero status here would abort the whole script under `set -e`.
+  return 0
 }
 
 load_theme_colors() {
-    local theme_file
-    theme_file=$(theme_colors_file)
-    if [[ -n "$theme_file" && -f "$theme_file" ]]; then
-        local accent="" foreground="" background=""
-        local color1="" color2="" color3=""
-        local t_red="" t_green="" t_yellow="" t_orange=""
-        # `|| [[ -n "$line" ]]` so a file whose last line has no trailing
-        # newline still contributes its final key.
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            # Skip comments and empty lines
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ -z "${line// /}" ]] && continue
-            # Parse key = "value"
-            if [[ "$line" =~ ^[[:space:]]*([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*=[[:space:]]*\"([^\"]*)\" ]]; then
-                local key="${BASH_REMATCH[1]}" val="${BASH_REMATCH[2]}"
-                case "$key" in
-                    accent)     accent="$val" ;;
-                    foreground) foreground="$val" ;;
-                    background) background="$val" ;;
-                    # Named keys, as current Omarchy themes ship them.
-                    red)        t_red="$val" ;;
-                    green)      t_green="$val" ;;
-                    yellow)     t_yellow="$val" ;;
-                    orange)     t_orange="$val" ;;
-                    # Legacy terminal-palette keys.
-                    color1)     color1="$val" ;;
-                    color2)     color2="$val" ;;
-                    color3)     color3="$val" ;;
-                esac
-            fi
-        done < <(read_bounded "$theme_file" "$MAX_CONFIG_BYTES")
-        # Map theme colors to widget colors. Named keys win; the color1/2/3
-        # fallbacks keep older themes working exactly as before (where color1
-        # stood in for both red and orange).
-        set_color_var BLUE "$accent"
-        set_color_var FG   "$foreground"
-        # Candidates in priority order, and the FIRST USABLE one wins: a theme
-        # whose semantic key is malformed still gets its legacy color1/2/3
-        # honored, instead of the bad value shadowing the good one.
-        set_color_var_first RED    "$t_red" "$color1"
-        set_color_var_first ORANGE "$t_orange" "$t_red" "$color1"
-        set_color_var_first GREEN  "$t_green" "$color2"
-        set_color_var_first YELLOW "$t_yellow" "$color3"
-        apply_surface_colors "$foreground" "$background"
-        THEME_SOURCE="omarchy"
-    fi
-    return 0
+  local theme_file
+  theme_file=$(theme_colors_file)
+  if [[ -n "$theme_file" && -f "$theme_file" ]]; then
+    local accent="" foreground="" background=""
+    local color1="" color2="" color3=""
+    local t_red="" t_green="" t_yellow="" t_orange=""
+    # `|| [[ -n "$line" ]]` so a file whose last line has no trailing
+    # newline still contributes its final key.
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      # Skip comments and empty lines
+      [[ "$line" =~ ^[[:space:]]*# ]] && continue
+      [[ -z "${line// /}" ]] && continue
+      # Parse key = "value"
+      if [[ "$line" =~ ^[[:space:]]*([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*=[[:space:]]*\"([^\"]*)\" ]]; then
+        local key="${BASH_REMATCH[1]}" val="${BASH_REMATCH[2]}"
+        case "$key" in
+        accent) accent="$val" ;;
+        foreground) foreground="$val" ;;
+        background) background="$val" ;;
+        # Named keys, as current Omarchy themes ship them.
+        red) t_red="$val" ;;
+        green) t_green="$val" ;;
+        yellow) t_yellow="$val" ;;
+        orange) t_orange="$val" ;;
+        # Legacy terminal-palette keys.
+        color1) color1="$val" ;;
+        color2) color2="$val" ;;
+        color3) color3="$val" ;;
+        esac
+      fi
+    done < <(read_bounded "$theme_file" "$MAX_CONFIG_BYTES")
+    # Map theme colors to widget colors. Named keys win; the color1/2/3
+    # fallbacks keep older themes working exactly as before (where color1
+    # stood in for both red and orange).
+    set_color_var BLUE "$accent"
+    set_color_var FG "$foreground"
+    # Candidates in priority order, and the FIRST USABLE one wins: a theme
+    # whose semantic key is malformed still gets its legacy color1/2/3
+    # honored, instead of the bad value shadowing the good one.
+    set_color_var_first RED "$t_red" "$color1"
+    set_color_var_first ORANGE "$t_orange" "$t_red" "$color1"
+    set_color_var_first GREEN "$t_green" "$color2"
+    set_color_var_first YELLOW "$t_yellow" "$color3"
+    apply_surface_colors "$foreground" "$background"
+    THEME_SOURCE="omarchy"
+  fi
+  return 0
 }
 
 # DIM / MARKER / BAR_EMPTY are derived the same way from every color source.
-apply_surface_colors() {  # <foreground> <background>
-    local fg bg
-    fg=$(normalize_hex "${1:-}" 2>/dev/null) || fg=""
-    bg=$(normalize_hex "${2:-}" 2>/dev/null) || bg=""
-    is_hex_color "${1:-}" || fg=""
-    is_hex_color "${2:-}" || bg=""
-    # DIM = midpoint between foreground and background
-    [[ -n "$fg" && -n "$bg" ]] && DIM=$(hex_blend "$fg" "$bg")
-    MARKER="$FG"
-    # BAR_EMPTY = slightly lighter than background (blend bg with dim)
-    [[ -n "$bg" ]] && BAR_EMPTY=$(hex_blend "$bg" "$DIM")
-    return 0
+apply_surface_colors() { # <foreground> <background>
+  local fg bg
+  fg=$(normalize_hex "${1:-}" 2>/dev/null) || fg=""
+  bg=$(normalize_hex "${2:-}" 2>/dev/null) || bg=""
+  is_hex_color "${1:-}" || fg=""
+  is_hex_color "${2:-}" || bg=""
+  # DIM = midpoint between foreground and background
+  [[ -n "$fg" && -n "$bg" ]] && DIM=$(hex_blend "$fg" "$bg")
+  MARKER="$FG"
+  # BAR_EMPTY = slightly lighter than background (blend bg with dim)
+  [[ -n "$bg" ]] && BAR_EMPTY=$(hex_blend "$bg" "$DIM")
+  return 0
 }
 
-# pywal-compatible palette, consulted ONLY when no Omarchy theme was found.
+# JSONC to JSON: `//` and `/* */` comments go, and so does a comma right before
+# `]` or `}`. A small state machine tracks strings, so a `//` or a comma INSIDE
+# one — an image path such as "file:///…" — is never touched. Valid JSON comes
+# out unchanged. Byte-wise (LC_ALL=C): every byte it looks for is ASCII, and
+# no byte of a UTF-8 multibyte character can equal one.
+jsonc_to_json() {
+  LC_ALL=C awk '
+    {
+        line = $0; n = length(line); seg = blk ? 0 : 1
+        for (i = 1; i <= n; i++) {
+            c = substr(line, i, 1)
+            if (blk) {
+                if (c == "*" && substr(line, i + 1, 1) == "/") { blk = 0; i++; seg = i + 1 }
+                continue
+            }
+            if (str) {
+                if (esc) esc = 0
+                else if (c == "\\") esc = 1
+                else if (c == "\"") str = 0
+                continue
+            }
+            if (c == "/") {
+                d = substr(line, i + 1, 1)
+                if (d == "/" || d == "*") {
+                    if (seg) printf "%s", substr(line, seg, i - seg)
+                    seg = 0
+                    if (d == "/") break
+                    blk = 1; i++; continue
+                }
+            }
+            if (c == " " || c == "\t" || c == "\r") continue
+            # A comma is held back until the next token shows whether it
+            # trails: dropped before ] or }, written out before anything else.
+            if (c == ",") {
+                if (seg) printf "%s", substr(line, seg, i - seg)
+                if (pend) printf ","
+                pend = 1; seg = i + 1; continue
+            }
+            if (pend) {
+                if (seg) printf "%s", substr(line, seg, i - seg)
+                if (c != "]" && c != "}") printf ","
+                pend = 0; seg = i
+            }
+            if (!seg) seg = i
+            if (c == "\"") str = 1
+        }
+        if (seg && seg <= n) printf "%s", substr(line, seg)
+        printf "\n"
+    }'
+}
+
+# Matugen (Material You from the wallpaper), consulted ONLY when no Omarchy
+# theme was found, and before pywal: its roles have names, so nothing has to be
+# guessed from terminal slots. Matugen writes only what a template or a
+# `--json` redirect asks for, so the path is the one a Matugen setup uses under
+# its own cache dir: ${XDG_CACHE_HOME:-~/.cache}/matugen/colors.json, or
+# colors.jsonc (comments and trailing commas are stripped first).
+#
+# Every layout Matugen has produced is read, so the file can come from
+# `matugen … --json hex` or from a template that copies its shape:
+#   v4 --json             colors.<role>.default.color  (or .<dark|light>.color)
+#   --old-json-output     colors.<role>.default        (a plain string)
+#   v2 / the image cache  colors.<dark|light>.<role>
+#   a flat template       <role>  or  <dark|light>.<role>
+# `default` is the scheme Matugen ran with; without it, `mode` (or
+# `is_dark_mode`) picks dark or light, and dark is the fallback. Values may be
+# #rgb, #rrggbb or Matugen's #rrggbbaa — the alpha is dropped like any other.
+#
+# Mapping: on_surface -> text, surface -> the surfaces, primary -> accent,
+# error -> red. Material has no green, yellow or orange role, so those come
+# from custom colors with those names ([config.custom_colors] green = …), and a
+# custom `red` beats `error`. A slot the file does not fill keeps its built-in
+# default; orange, when not given, is the yellow/red midpoint, as for pywal.
+# A file with no usable color at all does not claim the theme, so pywal behind
+# it still applies. Missing, unreadable or invalid: silent, always returns 0.
+load_matugen_colors() {
+  [[ -z "$THEME_SOURCE" ]] || return 0
+  command -v jq &>/dev/null || return 0
+
+  local mg_dir="${XDG_CACHE_HOME:-$HOME/.cache}/matugen" mg_file="" p
+  for p in "$mg_dir/colors.json" "$mg_dir/colors.jsonc"; do
+    [[ -f "$p" && -r "$p" ]] && {
+      mg_file="$p"
+      break
+    }
+  done
+  [[ -n "$mg_file" ]] || return 0
+
+  # One value per line, in a fixed order, for the same reason as the pywal
+  # loader below. `hex` keeps only hex strings, so a file dumped in another
+  # format (rgb(), hsl()) falls through to the next shape instead of
+  # reaching the color math.
+  local _mg=()
+  readarray -t _mg < <(read_bounded "$mg_file" "$MAX_CONFIG_BYTES" 2>/dev/null |
+    jsonc_to_json | jq -r '
+        ((.mode? | strings | ascii_downcase | select(. == "dark" or . == "light"))
+          // (if .is_dark_mode? == false then "light" else "dark" end)) as $m
+        | def hex:
+            if type == "string" then
+                select(test("^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"))
+                | ascii_downcase
+            elif type == "object" then (.color // .default // .[$m]) | hex
+            else empty end;
+          def role($r):
+            first((.colors[$r]?, .colors[$m][$r]?, .[$r]?, .[$m][$r]?)
+                  | select(. != null) | hex) // "";
+          role("on_surface"), role("surface"), role("primary"),
+          role("red"), role("error"),
+          role("green"), role("yellow"), role("orange")' 2>/dev/null) || true
+  ((${#_mg[@]} == 8)) || return 0
+
+  local mg_fg="${_mg[0]}" mg_bg="${_mg[1]}" mg_primary="${_mg[2]}"
+  local mg_red="${_mg[3]}" mg_error="${_mg[4]}"
+  local mg_green="${_mg[5]}" mg_yellow="${_mg[6]}" mg_orange="${_mg[7]}"
+
+  local v any=""
+  for v in "${_mg[@]}"; do [[ -n "$v" ]] && {
+    any=1
+    break
+  }; done
+  [[ -n "$any" ]] || return 0
+
+  set_color_var FG "$mg_fg"
+  set_color_var BLUE "$mg_primary"
+  set_color_var_first RED "$mg_red" "$mg_error"
+  set_color_var GREEN "$mg_green"
+  set_color_var YELLOW "$mg_yellow"
+
+  local o_y o_r
+  if is_hex_color "$mg_orange"; then
+    set_color_var ORANGE "$mg_orange"
+  elif o_y=$(normalize_hex "$YELLOW" 2>/dev/null) && o_r=$(normalize_hex "$RED" 2>/dev/null); then
+    ORANGE=$(hex_blend "$o_y" "$o_r")
+  fi
+
+  apply_surface_colors "$mg_fg" "$mg_bg"
+  THEME_SOURCE="matugen"
+  return 0
+}
+
+# pywal-compatible palette, consulted ONLY when neither an Omarchy theme nor a
+# Matugen palette was found.
 # ${XDG_CACHE_HOME:-~/.cache}/wal/colors.json is the de-facto standard path:
 # the original pywal is archived, but the maintained pywal16 fork writes the
 # same file and wallust ships a pywal-compat target to it, so this one path
 # covers all three. Missing file, unreadable file, or invalid JSON degrades
 # silently to the built-in defaults — this function always returns 0.
 load_pywal_colors() {
-    [[ -z "$THEME_SOURCE" ]] || return 0
-    command -v jq &>/dev/null || return 0
+  [[ -z "$THEME_SOURCE" ]] || return 0
+  command -v jq &>/dev/null || return 0
 
-    local wal_file="${XDG_CACHE_HOME:-$HOME/.cache}/wal/colors.json"
-    [[ -f "$wal_file" && -r "$wal_file" ]] || return 0
+  local wal_file="${XDG_CACHE_HOME:-$HOME/.cache}/wal/colors.json"
+  [[ -f "$wal_file" && -r "$wal_file" ]] || return 0
 
-    # One pass, one value per line; `| strings` drops non-string values. Line
-    # separated rather than @tsv on purpose: a tab is IFS whitespace, so `read`
-    # would collapse runs of them and silently shift every value after a key the
-    # palette happens to omit. A parse failure yields no lines, and the count
-    # check below then leaves every field at its default.
-    local _pw=()
-    readarray -t _pw < <(read_bounded "$wal_file" "$MAX_STATE_BYTES" 2>/dev/null | jq -r '
+  # One pass, one value per line; `| strings` drops non-string values. Line
+  # separated rather than @tsv on purpose: a tab is IFS whitespace, so `read`
+  # would collapse runs of them and silently shift every value after a key the
+  # palette happens to omit. A parse failure yields no lines, and the count
+  # check below then leaves every field at its default.
+  local _pw=()
+  readarray -t _pw < <(read_bounded "$wal_file" "$MAX_STATE_BYTES" 2>/dev/null | jq -r '
         ((.special.foreground | strings) // ""),
         ((.special.background | strings) // ""),
         ((.special.cursor     | strings) // ""),
@@ -640,29 +843,29 @@ load_pywal_colors() {
         ((.colors.color2      | strings) // ""),
         ((.colors.color3      | strings) // ""),
         ((.colors.color4      | strings) // "")' 2>/dev/null) || true
-    (( ${#_pw[@]} == 7 )) || return 0
+  ((${#_pw[@]} == 7)) || return 0
 
-    local pw_fg="${_pw[0]}" pw_bg="${_pw[1]}" pw_cursor="${_pw[2]}"
-    local pw_c1="${_pw[3]}" pw_c2="${_pw[4]}" pw_c3="${_pw[5]}" pw_c4="${_pw[6]}"
+  local pw_fg="${_pw[0]}" pw_bg="${_pw[1]}" pw_cursor="${_pw[2]}"
+  local pw_c1="${_pw[3]}" pw_c2="${_pw[4]}" pw_c3="${_pw[5]}" pw_c4="${_pw[6]}"
 
-    set_color_var FG     "$pw_fg"
-    set_color_var RED    "$pw_c1"
-    set_color_var GREEN  "$pw_c2"
-    set_color_var YELLOW "$pw_c3"
-    # accent: color4, or the cursor color when the palette omits it.
-    set_color_var BLUE   "${pw_c4:-$pw_cursor}"
+  set_color_var FG "$pw_fg"
+  set_color_var RED "$pw_c1"
+  set_color_var GREEN "$pw_c2"
+  set_color_var YELLOW "$pw_c3"
+  # accent: color4, or the cursor color when the palette omits it.
+  set_color_var BLUE "${pw_c4:-$pw_cursor}"
 
-    # pywal has no orange slot. Synthesize it as the midpoint of yellow and red
-    # so the gauge keeps four distinct steps; aliasing it to red would flatten
-    # the 75-90% segment into one flat block.
-    local o_y o_r
-    if o_y=$(normalize_hex "$YELLOW" 2>/dev/null) && o_r=$(normalize_hex "$RED" 2>/dev/null); then
-        ORANGE=$(hex_blend "$o_y" "$o_r")
-    fi
+  # pywal has no orange slot. Synthesize it as the midpoint of yellow and red
+  # so the gauge keeps four distinct steps; aliasing it to red would flatten
+  # the 75-90% segment into one flat block.
+  local o_y o_r
+  if o_y=$(normalize_hex "$YELLOW" 2>/dev/null) && o_r=$(normalize_hex "$RED" 2>/dev/null); then
+    ORANGE=$(hex_blend "$o_y" "$o_r")
+  fi
 
-    apply_surface_colors "$pw_fg" "$pw_bg"
-    THEME_SOURCE="pywal"
-    return 0
+  apply_surface_colors "$pw_fg" "$pw_bg"
+  THEME_SOURCE="pywal"
+  return 0
 }
 
 # One Dark defaults (overridden by Omarchy theme if available)
@@ -675,16 +878,18 @@ DIM="#5c6370"
 FG="#abb2bf"
 BAR_EMPTY="#3e4451"
 MARKER="$FG"
-# Resolution chain: --color-* flags (applied below) > Omarchy theme > pywal
-# cache > these built-ins. Each loader is a no-op when the previous one already
-# supplied a palette, and every one of them returns 0 so `set -e` can't trip.
+# Resolution chain: --color-* flags (applied below) > Omarchy theme > Matugen
+# > pywal cache > these built-ins. Each loader is a no-op when the previous one
+# already supplied a palette, and every one of them returns 0 so `set -e` can't
+# trip.
 load_theme_colors
+load_matugen_colors
 load_pywal_colors
 
-# Bar text colors: CLI overrides > theme/pywal > One Dark defaults
-[[ -n "$BAR_COLOR_LOW" ]]      || BAR_COLOR_LOW="$GREEN"
-[[ -n "$BAR_COLOR_MID" ]]      || BAR_COLOR_MID="$YELLOW"
-[[ -n "$BAR_COLOR_HIGH" ]]     || BAR_COLOR_HIGH="$ORANGE"
+# Bar text colors: CLI overrides > theme/Matugen/pywal > One Dark defaults
+[[ -n "$BAR_COLOR_LOW" ]] || BAR_COLOR_LOW="$GREEN"
+[[ -n "$BAR_COLOR_MID" ]] || BAR_COLOR_MID="$YELLOW"
+[[ -n "$BAR_COLOR_HIGH" ]] || BAR_COLOR_HIGH="$ORANGE"
 [[ -n "$BAR_COLOR_CRITICAL" ]] || BAR_COLOR_CRITICAL="$RED"
 
 # The gradient math needs 6-digit hex, but --color-* has always accepted any
@@ -694,11 +899,11 @@ load_pywal_colors
 # "16#re" to the arithmetic and killing the script under `set -e`.
 GRADIENT_OK=true
 for _anchor in BAR_COLOR_LOW BAR_COLOR_MID BAR_COLOR_HIGH BAR_COLOR_CRITICAL; do
-    if is_hex_color "${!_anchor}"; then
-        printf -v "$_anchor" '%s' "$(normalize_hex "${!_anchor}")"
-    else
-        GRADIENT_OK=false
-    fi
+  if is_hex_color "${!_anchor}"; then
+    printf -v "$_anchor" '%s' "$(normalize_hex "${!_anchor}")"
+  else
+    GRADIENT_OK=false
+  fi
 done
 
 # --- The gauge ---
@@ -714,59 +919,64 @@ GAUGE_COLORS=("$BAR_COLOR_LOW" "$BAR_COLOR_MID" "$BAR_COLOR_HIGH" "$BAR_COLOR_CR
 BAR_LEN=20
 
 # Window durations in seconds
-SESSION_WINDOW=$(( 5 * 3600 ))      # 5 hours
-WEEKLY_WINDOW=$(( 7 * 24 * 3600 ))  # 7 days
+SESSION_WINDOW=$((5 * 3600))     # 5 hours
+WEEKLY_WINDOW=$((7 * 24 * 3600)) # 7 days
 
 # --- Helpers ---
 
 die() {
-    if [[ "$JSON_MODE" == "true" ]]; then
-        # Structured mode: raw data, no Pango. Strip the <b> tags die messages
-        # carry and flatten newlines; still always exit 0 with valid JSON.
-        # Callers write their line breaks as the two characters \ and n (the
-        # messages are double-quoted literals), so those collapse here too —
-        # otherwise a backslash-n would travel into the JSON as text.
-        local _m="$1"
-        _m="${_m//<b>/}"; _m="${_m//<\/b>/}"
-        _m="${_m//\\n/ }"; _m="${_m//$'\n'/ }"
-        if command -v jq &>/dev/null; then
-            jq -nc --arg m "$_m" \
-                '{schema_version:2, error:{message:$m}, loading:false, windows:[], extra_usage:null}'
-        else
-            _m="${_m//\\/\\\\}"; _m="${_m//\"/\\\"}"
-            printf '{"schema_version":2,"error":{"message":"%s"},"loading":false,"windows":[],"extra_usage":null}\n' "$_m"
-        fi
-        exit 0
-    fi
-    # Waybar tooltip: turn the callers' literal \n into a real newline so the
-    # second line renders as a line break instead of showing "\n" verbatim.
-    local _tip="${1//\\n/$'\n'}"
+  if [[ "$JSON_MODE" == "true" ]]; then
+    # Structured mode: raw data, no Pango. Strip the <b> tags die messages
+    # carry and flatten newlines; still always exit 0 with valid JSON.
+    # Callers write their line breaks as the two characters \ and n (the
+    # messages are double-quoted literals), so those collapse here too —
+    # otherwise a backslash-n would travel into the JSON as text.
+    local _m="$1"
+    _m="${_m//<b>/}"
+    _m="${_m//<\/b>/}"
+    _m="${_m//\\n/ }"
+    _m="${_m//$'\n'/ }"
     if command -v jq &>/dev/null; then
-        jq -nc --arg t "⚠" --arg tip "$_tip" '{text:$t, tooltip:$tip, class:"critical"}'
+      jq -nc --arg m "$_m" \
+        '{schema_version:2, error:{message:$m}, loading:false, windows:[], extra_usage:null}'
     else
-        local _m="${_tip//\\/\\\\}"; _m="${_m//\"/\\\"}"; _m="${_m//$'\n'/\\n}"
-        printf '{"text":"⚠","tooltip":"%s","class":"critical"}\n' "$_m"
+      _m="${_m//\\/\\\\}"
+      _m="${_m//\"/\\\"}"
+      printf '{"schema_version":2,"error":{"message":"%s"},"loading":false,"windows":[],"extra_usage":null}\n' "$_m"
     fi
     exit 0
+  fi
+  # Waybar tooltip: turn the callers' literal \n into a real newline so the
+  # second line renders as a line break instead of showing "\n" verbatim.
+  local _tip="${1//\\n/$'\n'}"
+  if command -v jq &>/dev/null; then
+    jq -nc --arg t "⚠" --arg tip "$_tip" '{text:$t, tooltip:$tip, class:"critical"}'
+  else
+    local _m="${_tip//\\/\\\\}"
+    _m="${_m//\"/\\\"}"
+    _m="${_m//$'\n'/\\n}"
+    printf '{"text":"⚠","tooltip":"%s","class":"critical"}\n' "$_m"
+  fi
+  exit 0
 }
 
 # Soft exit for transient network failures with no usable cache. Emits a neutral
 # "Loading…" widget in the low class so Waybar styles it like normal usage and
 # doesn't draw attention to a state that will self-resolve on the next dispatch.
 loading_network() {
-    if [[ "$JSON_MODE" == "true" ]]; then
-        jq -nc '{schema_version:2, error:null, loading:true, windows:[], extra_usage:null}'
-        exit 0
-    fi
-    jq -nc \
-        --arg t "${BAR_ICON:+${BAR_ICON} }Loading…" \
-        --arg tip $'Waiting for network — no cached usage yet.\nWill retry shortly.' \
-        '{text:$t, tooltip:$tip, class:"low"}'
+  if [[ "$JSON_MODE" == "true" ]]; then
+    jq -nc '{schema_version:2, error:null, loading:true, windows:[], extra_usage:null}'
     exit 0
+  fi
+  jq -nc \
+    --arg t "${BAR_ICON:+${BAR_ICON} }Loading…" \
+    --arg tip $'Waiting for network — no cached usage yet.\nWill retry shortly.' \
+    '{text:$t, tooltip:$tip, class:"low"}'
+  exit 0
 }
 
 pango_escape() {
-    sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' <<< "${1:-}"
+  sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' <<<"${1:-}"
 }
 
 # Hand strings to jq on STDIN (or a pipe), one base64 line each, for
@@ -776,9 +986,12 @@ pango_escape() {
 # not raw text: jq 1.7 reads raw input in 4 KiB blocks and mangles a UTF-8
 # character split across two of them, while @base64d decodes the whole string
 # at once, exactly like `--arg` (invalid UTF-8 included).
-b64_lines() {  # b64_lines <string>...
-    local s
-    for s in "$@"; do printf '%s' "$s" | base64 -w0; printf '\n'; done
+b64_lines() { # b64_lines <string>...
+  local s
+  for s in "$@"; do
+    printf '%s' "$s" | base64 -w0
+    printf '\n'
+  done
 }
 
 # Strip color from Pango markup while keeping everything structural: only the
@@ -792,7 +1005,7 @@ b64_lines() {  # b64_lines <string>...
 # body text that merely looks like an attribute alone. Names are matched in
 # lowercase because that is the only spelling Pango itself honors.
 decolor() {
-    awk '''
+  awk '''
     BEGIN {
         q = sprintf("%c", 39)   # single quote, built here to dodge shell quoting
         names = "foreground|fgcolor|color|background|bgcolor|underline_color|overline_color|strikethrough_color"
@@ -816,13 +1029,18 @@ decolor() {
 
 # Relative age for stale messaging. Negative (clock skew) → empty, caller omits it.
 rel_age() {
-    local s=$1
-    if   (( s < 0 ));     then return 0
-    elif (( s < 60 ));    then printf 'just now'
-    elif (( s < 3600 ));  then printf '%d min ago' $(( s / 60 ))
-    elif (( s < 86400 )); then printf '%d h ago' $(( s / 3600 ))
-    else printf '%d d ago' $(( s / 86400 ))
-    fi
+  local s=$1
+  if ((s < 0)); then
+    return 0
+  elif ((s < 60)); then
+    printf 'just now'
+  elif ((s < 3600)); then
+    printf '%d min ago' $((s / 60))
+  elif ((s < 86400)); then
+    printf '%d h ago' $((s / 3600))
+  else
+    printf '%d d ago' $((s / 86400))
+  fi
 }
 
 # Usage severity for a window percent, read off the gauge definition above:
@@ -831,43 +1049,56 @@ rel_age() {
 # "state" field both derive from this, and color_for interpolates between the
 # very same thresholds.
 severity_for() {
-    local p=$1 i
-    for (( i = ${#GAUGE_PCTS[@]} - 1; i > 0; i-- )); do
-        (( p >= GAUGE_PCTS[i] )) && { printf '%s' "${GAUGE_STATES[i]}"; return; }
-    done
-    printf '%s' "${GAUGE_STATES[0]}"
+  local p=$1 i
+  for ((i = ${#GAUGE_PCTS[@]} - 1; i > 0; i--)); do
+    ((p >= GAUGE_PCTS[i])) && {
+      printf '%s' "${GAUGE_STATES[i]}"
+      return
+    }
+  done
+  printf '%s' "${GAUGE_STATES[0]}"
 }
 
 # Continuous usage color: linear interpolation between the gauge anchors, so a
 # percentage lands on exactly the color the published `palette.stops` describe.
-# Anchors come from the resolution chain (--color-* > theme > pywal > built-in),
-# which is why user overrides reshape the whole ramp and not just its ends.
+# Anchors come from the resolution chain (--color-* > theme > Matugen > pywal >
+# built-in), which is why user overrides reshape the whole ramp and not just its
+# ends.
 color_for() {
-    local p=$1 i last span
-    (( p < 0 )) && p=0
-    last=$(( ${#GAUGE_PCTS[@]} - 1 ))
+  local p=$1 i last span
+  ((p < 0)) && p=0
+  last=$((${#GAUGE_PCTS[@]} - 1))
 
-    # A non-hex anchor (a Pango color name) cannot be interpolated; fall back to
-    # discrete steps, which is exactly how this behaved before the gradient.
-    if [[ "$GRADIENT_OK" != "true" ]]; then
-        for (( i = last; i > 0; i-- )); do
-            (( p >= GAUGE_PCTS[i] )) && { printf '%s' "${GAUGE_COLORS[i]}"; return; }
-        done
-        printf '%s' "${GAUGE_COLORS[0]}"
+  # A non-hex anchor (a Pango color name) cannot be interpolated; fall back to
+  # discrete steps, which is exactly how this behaved before the gradient.
+  if [[ "$GRADIENT_OK" != "true" ]]; then
+    for ((i = last; i > 0; i--)); do
+      ((p >= GAUGE_PCTS[i])) && {
+        printf '%s' "${GAUGE_COLORS[i]}"
         return
-    fi
-
-    (( p >= GAUGE_PCTS[last] )) && { printf '%s' "${GAUGE_COLORS[last]}"; return; }
-    for (( i = last - 1; i >= 0; i-- )); do
-        if (( p >= GAUGE_PCTS[i] )); then
-            span=$(( GAUGE_PCTS[i + 1] - GAUGE_PCTS[i] ))
-            (( span <= 0 )) && { printf '%s' "${GAUGE_COLORS[i]}"; return; }
-            hex_lerp "${GAUGE_COLORS[i]}" "${GAUGE_COLORS[i + 1]}" \
-                $(( (p - GAUGE_PCTS[i]) * 1000 / span ))
-            return
-        fi
+      }
     done
     printf '%s' "${GAUGE_COLORS[0]}"
+    return
+  fi
+
+  ((p >= GAUGE_PCTS[last])) && {
+    printf '%s' "${GAUGE_COLORS[last]}"
+    return
+  }
+  for ((i = last - 1; i >= 0; i--)); do
+    if ((p >= GAUGE_PCTS[i])); then
+      span=$((GAUGE_PCTS[i + 1] - GAUGE_PCTS[i]))
+      ((span <= 0)) && {
+        printf '%s' "${GAUGE_COLORS[i]}"
+        return
+      }
+      hex_lerp "${GAUGE_COLORS[i]}" "${GAUGE_COLORS[i + 1]}" \
+        $(((p - GAUGE_PCTS[i]) * 1000 / span))
+      return
+    fi
+  done
+  printf '%s' "${GAUGE_COLORS[0]}"
 }
 
 # Pacing severity based on signed pacing delta, centered around zero:
@@ -878,21 +1109,25 @@ color_for() {
 # Same single-source rule as severity_for: --format-pace-color and the
 # --json per-window pace "state" field both derive from this.
 pace_severity_for() {
-    local delta=${1:-0}
-    if   (( delta >= 10 ));  then printf 'hot'
-    elif (( delta > 0 ));    then printf 'ahead'
-    elif (( delta >= -10 )); then printf 'on_pace'
-    else printf 'under'
-    fi
+  local delta=${1:-0}
+  if ((delta >= 10)); then
+    printf 'hot'
+  elif ((delta > 0)); then
+    printf 'ahead'
+  elif ((delta >= -10)); then
+    printf 'on_pace'
+  else
+    printf 'under'
+  fi
 }
 
 pace_color_for() {
-    case "$(pace_severity_for "${1:-0}")" in
-        hot)     printf '%s' "$RED" ;;
-        ahead)   printf '%s' "$ORANGE" ;;
-        on_pace) printf '%s' "$YELLOW" ;;
-        *)       printf '%s' "$GREEN" ;;
-    esac
+  case "$(pace_severity_for "${1:-0}")" in
+  hot) printf '%s' "$RED" ;;
+  ahead) printf '%s' "$ORANGE" ;;
+  on_pace) printf '%s' "$YELLOW" ;;
+  *) printf '%s' "$GREEN" ;;
+  esac
 }
 
 # Per-cell gradient colors for bar fills, precomputed once per run: the ramp
@@ -902,32 +1137,34 @@ pace_color_for() {
 # would claim a precision the cell does not have.
 GRAD_CELLS=()
 init_grad_cells() {
-    local k
-    for (( k = 0; k < BAR_LEN; k++ )); do
-        GRAD_CELLS[k]=$(color_for $(( (k * 100 + 50) / BAR_LEN )))
-    done
+  local k
+  for ((k = 0; k < BAR_LEN; k++)); do
+    GRAD_CELLS[k]=$(color_for $(((k * 100 + 50) / BAR_LEN)))
+  done
 }
 
 # One run of filled cells with per-cell gradient colors (positional).
-grad_fill() {  # <start_cell> <count>
-    local k end=$(( $1 + $2 ))
-    for (( k = $1; k < end; k++ )); do
-        printf "<span foreground='%s'>█</span>" "${GRAD_CELLS[k]}"
-    done
+grad_fill() { # <start_cell> <count>
+  local k end=$(($1 + $2))
+  for ((k = $1; k < end; k++)); do
+    printf "<span foreground='%s'>█</span>" "${GRAD_CELLS[k]}"
+  done
 }
 
 # make_bar helpers. Both read make_bar's locals via bash dynamic scoping.
-_mb_fill() {  # <start_cell> <count> — flat span, or per-cell gradient when $color is empty
-    if [[ -n "$color" ]]; then
-        local run; printf -v run '%*s' "$2" ''
-        printf "<span foreground='%s'>%s</span>" "$color" "${run// /█}"
-    else
-        grad_fill "$1" "$2"
-    fi
+_mb_fill() { # <start_cell> <count> — flat span, or per-cell gradient when $color is empty
+  if [[ -n "$color" ]]; then
+    local run
+    printf -v run '%*s' "$2" ''
+    printf "<span foreground='%s'>%s</span>" "$color" "${run// /█}"
+  else
+    grad_fill "$1" "$2"
+  fi
 }
-_mb_empty() {  # <count>
-    local run; printf -v run '%*s' "$1" ''
-    printf "<span foreground='%s'>%s</span>" "$BAR_EMPTY" "${run// /░}"
+_mb_empty() { # <count>
+  local run
+  printf -v run '%*s' "$1" ''
+  printf "<span foreground='%s'>%s</span>" "$BAR_EMPTY" "${run// /░}"
 }
 
 # Build a progress bar with optional elapsed marker.
@@ -939,45 +1176,54 @@ _mb_empty() {  # <count>
 # When marker is provided, a ┃ (gate) in marker_color is placed at the elapsed
 # position, showing where you'd be if pacing evenly across the window.
 make_bar() {
-    local p=$1 color=$2 marker_pos=${3:--1} marker_color=${4:-}
-    local filled=$(( p * BAR_LEN / 100 ))
-    (( filled > BAR_LEN )) && filled=$BAR_LEN
-    (( filled < 0 )) && filled=0
+  local p=$1 color=$2 marker_pos=${3:--1} marker_color=${4:-}
+  local filled=$((p * BAR_LEN / 100))
+  ((filled > BAR_LEN)) && filled=$BAR_LEN
+  ((filled < 0)) && filled=0
 
-    if (( marker_pos < 0 )); then
-        _mb_fill 0 "$filled"
-        _mb_empty $(( BAR_LEN - filled ))
-        return
-    fi
+  if ((marker_pos < 0)); then
+    _mb_fill 0 "$filled"
+    _mb_empty $((BAR_LEN - filled))
+    return
+  fi
 
-    local m=$(( marker_pos * BAR_LEN / 100 ))
-    (( m > BAR_LEN - 1 )) && m=$(( BAR_LEN - 1 ))
-    local pre_f=$(( filled < m ? filled : m ))
-    local post_f=$(( filled > m + 1 ? filled - m - 1 : 0 ))
+  local m=$((marker_pos * BAR_LEN / 100))
+  ((m > BAR_LEN - 1)) && m=$((BAR_LEN - 1))
+  local pre_f=$((filled < m ? filled : m))
+  local post_f=$((filled > m + 1 ? filled - m - 1 : 0))
 
-    _mb_fill 0 "$pre_f"
-    _mb_empty $(( m - pre_f ))
-    printf "<span foreground='%s'>┃</span>" "$marker_color"
-    _mb_fill $(( m + 1 )) "$post_f"
-    _mb_empty $(( BAR_LEN - m - 1 - post_f ))
+  _mb_fill 0 "$pre_f"
+  _mb_empty $((m - pre_f))
+  printf "<span foreground='%s'>┃</span>" "$marker_color"
+  _mb_fill $((m + 1)) "$post_f"
+  _mb_empty $((BAR_LEN - m - 1 - post_f))
 }
 
 countdown() {
-    local ts=$1
-    [[ -z "$ts" ]] && { echo "—"; return; }
-    local reset now diff d h m
-    reset=$(date -d "$ts" +%s 2>/dev/null) || { echo "—"; return; }
-    now=$(date +%s)
-    diff=$(( reset - now ))
-    (( diff <= 0 )) && { echo "now"; return; }
-    d=$(( diff / 86400 ))
-    h=$(( diff % 86400 / 3600 ))
-    m=$(( diff % 3600 / 60 ))
-    if (( d > 0 )); then
-        echo "${d}d ${h}h"
-    else
-        printf '%dh %02dm' "$h" "$m"
-    fi
+  local ts=$1
+  [[ -z "$ts" ]] && {
+    echo "—"
+    return
+  }
+  local reset now diff d h m
+  reset=$(date -d "$ts" +%s 2>/dev/null) || {
+    echo "—"
+    return
+  }
+  now=$(date +%s)
+  diff=$((reset - now))
+  ((diff <= 0)) && {
+    echo "now"
+    return
+  }
+  d=$((diff / 86400))
+  h=$((diff % 86400 / 3600))
+  m=$((diff % 3600 / 60))
+  if ((d > 0)); then
+    echo "${d}d ${h}h"
+  else
+    printf '%dh %02dm' "$h" "$m"
+  fi
 }
 
 # Calculate time elapsed % and pacing for a usage window.
@@ -990,52 +1236,55 @@ countdown() {
 # Output fields (space-separated, single-token fields first):
 #   elapsed_pct pace_icon pace_indicator pace_delta pace_pct_label pace_pts_label
 calc_pacing() {
-    local usage_pct=$1 resets_at=$2 window_s=$3
-    local elapsed_pct=0 pace_icon="→" pace_indicator="→" pace_delta="0"
-    local pace_pct_label="on pace" pace_pts_label="on pace"
+  local usage_pct=$1 resets_at=$2 window_s=$3
+  local elapsed_pct=0 pace_icon="→" pace_indicator="→" pace_delta="0"
+  local pace_pct_label="on pace" pace_pts_label="on pace"
 
-    if [[ -n "$resets_at" && "$resets_at" != "0" && "$resets_at" != "null" ]] && (( window_s > 0 )); then
-        local reset_epoch remaining
-        reset_epoch=$(date -d "$resets_at" +%s 2>/dev/null) || { echo "0 → → 0 on pace on pace"; return; }
-        remaining=$(( reset_epoch - $(date +%s) ))
-        elapsed_pct=$(( (window_s - remaining) * 100 / window_s ))
-        (( elapsed_pct < 0 )) && elapsed_pct=0
-        (( elapsed_pct > 100 )) && elapsed_pct=100
+  if [[ -n "$resets_at" && "$resets_at" != "0" && "$resets_at" != "null" ]] && ((window_s > 0)); then
+    local reset_epoch remaining
+    reset_epoch=$(date -d "$resets_at" +%s 2>/dev/null) || {
+      echo "0 → → 0 on pace on pace"
+      return
+    }
+    remaining=$((reset_epoch - $(date +%s)))
+    elapsed_pct=$(((window_s - remaining) * 100 / window_s))
+    ((elapsed_pct < 0)) && elapsed_pct=0
+    ((elapsed_pct > 100)) && elapsed_pct=100
 
-        # Point-based delta for indicator, delta, and pts label
-        local delta=$(( usage_pct - elapsed_pct ))
-        pace_delta="$delta"
-        if (( delta > 0 )); then
-            pace_indicator="↑"
-            pace_pts_label="${delta}pts ahead"
-        elif (( delta < 0 )); then
-            pace_indicator="↓"
-            pace_pts_label="$(( -delta ))pts under"
-        fi
-
-        # Ratio-based icon and label for backward-compatible {*_pace} and {*_pace_pct}
-        if (( elapsed_pct > 0 )); then
-            local pacing_x100=$(( usage_pct * 100 / elapsed_pct ))
-            if (( pacing_x100 > 100 + PACE_TOLERANCE )); then
-                local dev=$(( pacing_x100 - 100 ))
-                (( dev > 999 )) && dev=999
-                pace_icon="↑"
-                pace_pct_label="${dev}% ahead"
-            elif (( pacing_x100 < 100 - PACE_TOLERANCE )); then
-                local dev=$(( 100 - pacing_x100 ))
-                (( dev > 999 )) && dev=999
-                pace_icon="↓"
-                pace_pct_label="${dev}% under"
-            fi
-        fi
+    # Point-based delta for indicator, delta, and pts label
+    local delta=$((usage_pct - elapsed_pct))
+    pace_delta="$delta"
+    if ((delta > 0)); then
+      pace_indicator="↑"
+      pace_pts_label="${delta}pts ahead"
+    elif ((delta < 0)); then
+      pace_indicator="↓"
+      pace_pts_label="$((-delta))pts under"
     fi
 
-    echo "${elapsed_pct} ${pace_icon} ${pace_indicator} ${pace_delta} ${pace_pct_label} ${pace_pts_label}"
+    # Ratio-based icon and label for backward-compatible {*_pace} and {*_pace_pct}
+    if ((elapsed_pct > 0)); then
+      local pacing_x100=$((usage_pct * 100 / elapsed_pct))
+      if ((pacing_x100 > 100 + PACE_TOLERANCE)); then
+        local dev=$((pacing_x100 - 100))
+        ((dev > 999)) && dev=999
+        pace_icon="↑"
+        pace_pct_label="${dev}% ahead"
+      elif ((pacing_x100 < 100 - PACE_TOLERANCE)); then
+        local dev=$((100 - pacing_x100))
+        ((dev > 999)) && dev=999
+        pace_icon="↓"
+        pace_pct_label="${dev}% under"
+      fi
+    fi
+  fi
+
+  echo "${elapsed_pct} ${pace_icon} ${pace_indicator} ${pace_delta} ${pace_pct_label} ${pace_pts_label}"
 }
 
 # --- Pre-checks ---
 for cmd in curl jq date base64 dd; do
-    command -v "$cmd" &>/dev/null || die "Missing dependency: $cmd"
+  command -v "$cmd" &>/dev/null || die "Missing dependency: $cmd"
 done
 [[ -f "$CREDS" ]] || die "No credentials.\nRun <b>claude</b> to log in."
 
@@ -1043,9 +1292,9 @@ done
 # Bounded: a rejected or truncated read leaves `creds` empty, and the jq check
 # below turns that into the same actionable message a corrupt file already got.
 creds=$(read_bounded "$CREDS" "$MAX_STATE_BYTES") || creds=""
-jq -e . <<< "$creds" &>/dev/null || die "Invalid credentials file.\nRun <b>claude</b> to log in."
-sub_type=$(jq -r 'try (.claudeAiOauth.subscriptionType // "unknown") catch "unknown"' <<< "$creds")
-rate_tier=$(jq -r 'try (.claudeAiOauth.rateLimitTier // "") catch ""' <<< "$creds")
+jq -e . <<<"$creds" &>/dev/null || die "Invalid credentials file.\nRun <b>claude</b> to log in."
+sub_type=$(jq -r 'try (.claudeAiOauth.subscriptionType // "unknown") catch "unknown"' <<<"$creds")
+rate_tier=$(jq -r 'try (.claudeAiOauth.rateLimitTier // "") catch ""' <<<"$creds")
 
 # --- Cache / lock setup ---
 mkdir -p "$CACHE_DIR" 2>/dev/null || die "Cannot create cache dir.\n$CACHE_DIR is not writable."
@@ -1057,240 +1306,241 @@ retry_at_marker="$CACHE_DIR/.retry_at"
 _lockfile="$CACHE_DIR/.fetch.lock"
 
 _fetch_usage() {
-    local _retry_at _now
-    if [[ "$FORCE_REFRESH" != "true" ]] && [[ -f "$cache_file" ]] && (( cache_age < CACHE_TTL )); then
+  local _retry_at _now
+  if [[ "$FORCE_REFRESH" != "true" ]] && [[ -f "$cache_file" ]] && ((cache_age < CACHE_TTL)); then
+    usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
+    return
+  fi
+
+  # The endpoint asked for silence until a given second. Keep it, and keep it
+  # for a forced refresh as well: an early ask is refused AND restarts the
+  # window, so a button that asks anyway is a button that keeps the module
+  # broken. The wait is in the tooltip through .last_error.
+  # The marker is our own file, but the cache dir is not a vault: a value
+  # that is not a plausible epoch (garbage, a truncated read, octal-looking
+  # zeros, a date past the clamp) is ignored — the next answer rewrites it.
+  _retry_at=""
+  _retry_at=$(read_bounded "$retry_at_marker" 32) || _retry_at=""
+  local _retry_at_len=${#_retry_at} # before the trim: a full read is a truncated one
+  _retry_at="${_retry_at//[[:space:]]/}"
+  _now=$(date +%s)
+  if ((_retry_at_len < 32)) && [[ "$_retry_at" =~ ^0*([0-9]{1,10})$ ]]; then
+    _retry_at=${BASH_REMATCH[1]}
+    ((_retry_at > _now + RETRY_AFTER_MAX)) && _retry_at=0
+  else
+    _retry_at=0
+  fi
+  if ((_retry_at > _now)); then
+    # The time reaches the tooltip through .last_error, which the 429 wrote.
+    # A token refresh in the meantime removes that file (a refresh that
+    # works clears the previous error), so put it back when it is gone;
+    # an error that is there already is newer than the 429 and stays.
+    if [[ ! -e "$CACHE_DIR/.last_error" ]]; then
+      write_atomic "$CACHE_DIR/.last_error" ".last_error.XXXXXX" \
+        "$(printf '429\nRate limited. Retry at %s.' "$(date -d "@$_retry_at" +%H:%M)")" || true
+    fi
+    if [[ -f "$cache_file" ]] && ((cache_age <= WEEKLY_WINDOW)); then
+      usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
+      touch "$stale_marker" 2>/dev/null || true
+      return
+    fi
+    die "Rate limited.\nThe API asked to wait until $(date -d "@$_retry_at" +%H:%M)."
+  fi
+
+  if [[ "$auth_ok" == "false" ]]; then
+    if [[ "$refresh_failure_kind" == "transient" ]]; then
+      # Network blip — stay quiet. Reuse recent cache with an in-memory
+      # stale flag, or show neutral "Loading…" if no usable cache exists.
+      # No disk markers, no desktop notification.
+      if [[ -f "$cache_file" ]] && ((cache_age <= WEEKLY_WINDOW)); then
         usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
+        transient_stale=true
         return
+      fi
+      loading_network
     fi
-
-    # The endpoint asked for silence until a given second. Keep it, and keep it
-    # for a forced refresh as well: an early ask is refused AND restarts the
-    # window, so a button that asks anyway is a button that keeps the module
-    # broken. The wait is in the tooltip through .last_error.
-    # The marker is our own file, but the cache dir is not a vault: a value
-    # that is not a plausible epoch (garbage, a truncated read, octal-looking
-    # zeros, a date past the clamp) is ignored — the next answer rewrites it.
-    _retry_at=""
-    _retry_at=$(read_bounded "$retry_at_marker" 32) || _retry_at=""
-    local _retry_at_len=${#_retry_at} # before the trim: a full read is a truncated one
-    _retry_at="${_retry_at//[[:space:]]/}"
-    _now=$(date +%s)
-    if (( _retry_at_len < 32 )) && [[ "$_retry_at" =~ ^0*([0-9]{1,10})$ ]]; then
-        _retry_at=${BASH_REMATCH[1]}
-        (( _retry_at > _now + RETRY_AFTER_MAX )) && _retry_at=0
-    else
-        _retry_at=0
-    fi
-    if (( _retry_at > _now )); then
-        # The time reaches the tooltip through .last_error, which the 429 wrote.
-        # A token refresh in the meantime removes that file (a refresh that
-        # works clears the previous error), so put it back when it is gone;
-        # an error that is there already is newer than the 429 and stays.
-        if [[ ! -e "$CACHE_DIR/.last_error" ]]; then
-            write_atomic "$CACHE_DIR/.last_error" ".last_error.XXXXXX" \
-                "$(printf '429\nRate limited. Retry at %s.' "$(date -d "@$_retry_at" +%H:%M)")" || true
-        fi
-        if [[ -f "$cache_file" ]] && (( cache_age <= WEEKLY_WINDOW )); then
-            usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
-            touch "$stale_marker" 2>/dev/null || true
-            return
-        fi
-        die "Rate limited.\nThe API asked to wait until $(date -d "@$_retry_at" +%H:%M)."
-    fi
-
-    if [[ "$auth_ok" == "false" ]]; then
-        if [[ "$refresh_failure_kind" == "transient" ]]; then
-            # Network blip — stay quiet. Reuse recent cache with an in-memory
-            # stale flag, or show neutral "Loading…" if no usable cache exists.
-            # No disk markers, no desktop notification.
-            if [[ -f "$cache_file" ]] && (( cache_age <= WEEKLY_WINDOW )); then
-                usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
-                transient_stale=true
-                return
-            fi
-            loading_network
-        fi
-        # Hard refresh failure (4xx/5xx, malformed) — preserve actionable signal.
-        if [[ -f "$cache_file" ]] && (( cache_age <= WEEKLY_WINDOW )); then
-            usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
-            if [[ ! -f "$stale_marker" ]]; then
-                touch "$stale_marker"
-                command -v notify-send &>/dev/null && \
-                    notify-send -u normal -i dialog-warning \
-                        "Claude Usage" "Token refresh failed. Check connection or run <b>claude</b>." 2>/dev/null || true
-            fi
-        else
-            die "Token refresh failed.\nCheck connection or run <b>claude</b>."
-        fi
-        return
-    fi
-
-    # Auth OK — fetch from API. Transient failures (no HTTP response: DHCP/DNS
-    # still settling at boot, brief blip) are retried until the shared deadline —
-    # one missed dispatch otherwise means stale data for a full Waybar interval.
-    # The response headers go to a temp file in our own cache dir, the same way
-    # the cache write stages its own temp: `-D` is the portable way to read one
-    # response header (`%{retry_after}` is not in every curl — 8.20.0 rejects
-    # it) and the body capture must stay parseable, so it cannot go to stdout.
-    local -a _hdr_opt=()
-    local _hdr_file="" _hdrs="" _retry_secs=0
-    # The flock serializes fetches, so a `.hdr.*` that exists here is an
-    # orphan of a run that died mid-transfer; sweep it, then stage a fresh
-    # one per attempt so a death in the retry sleep leaves nothing behind.
-    rm -f "$CACHE_DIR"/.hdr.?????? 2>/dev/null || true
-
-    while :; do
-        [[ -n "$_hdr_file" ]] && { rm -f "$_hdr_file" 2>/dev/null || true; }
-        _hdr_file=$(mktemp "$CACHE_DIR/.hdr.XXXXXX" 2>/dev/null) || _hdr_file=""
-        _hdr_opt=(); [[ -n "$_hdr_file" ]] && _hdr_opt=(-D "$_hdr_file")
-        # Headers go in through a config file on stdin, never argv: an
-        # `-H "Authorization: Bearer …"` sits in /proc/<pid>/cmdline for the
-        # whole transfer, readable by every process of this user. The balance
-        # fetch below already did this; both now do. A rejected token yields an
-        # empty config, so curl asks unauthenticated and gets a 401 — it never
-        # gets attacker-written option lines.
-        _resp_body=$(curl_auth_cfg "$access_token" | curl -q --config - -s --max-time 10 \
-            --proto '=https' --max-filesize "$MAX_RESP_BYTES" "${_hdr_opt[@]}" \
-            -w '\n%{http_code}' "$API_URL") || true
-        # Belt for --max-filesize, and it is needed. Measured on curl 8.21.0: a
-        # Content-Length past the cap is refused before a byte is read, but a
-        # CHUNKED response is aborted only AFTER the cap is reached — and those
-        # 2 MiB are already in this variable, write-out suffix intact, so the
-        # split below would read a plausible 200 and hand the flood to jq.
-        # Drop the whole capture, and stop retrying: a server that floods once
-        # floods again.
-        if resp_too_big "$_resp_body"; then
-            _resp_body=""
-            _http_code="000"
-            break
-        fi
-        _http_code="${_resp_body##*$'\n'}"
-        _resp_body="${_resp_body%$'\n'"$_http_code"}"
-        # Normalize bogus codes (e.g. raw body without curl write-out suffix) to 000.
-        [[ "$_http_code" =~ ^[0-9]{3}$ ]] || _http_code="000"
-        if [[ "$_http_code" != "000" ]]; then break; fi
-        if (( SECONDS >= net_deadline )); then break; fi
-        sleep "$NET_RETRY_DELAY"
-    done
-
-    if [[ -n "$_hdr_file" ]]; then
-        _hdrs=$(read_bounded "$_hdr_file" "$MAX_STATE_BYTES") || _hdrs=""
-        rm -f "$_hdr_file" 2>/dev/null || true
-        _retry_secs=$(_retry_after_seconds "$_hdrs")
-    fi
-
-    # A 429 sets the wait BEFORE the cache decides what to show: the first 429
-    # of a fresh install has no cache, and it must not be the one that asks
-    # again. The time is announced only once it is on disk — a wait that was
-    # not kept is a wait the next run will not honour.
-    local _retry_note=""
-    if [[ "$_http_code" == "429" ]] && (( _retry_secs > 0 )); then
-        _retry_at=$(( $(date +%s) + _retry_secs ))
-        if persist_retry_at "$_retry_at"; then
-            _retry_note="Retry at $(date -d "@$_retry_at" +%H:%M)."
-        fi
-    fi
-
-    if [[ "$_http_code" == "200" ]] && [[ -n "$_resp_body" ]] && jq -e '.five_hour' <<< "$_resp_body" &>/dev/null; then
-        usage="$_resp_body"
-        _ctmp=$(mktemp "$CACHE_DIR/.usage.XXXXXX")
-        printf '%s' "$usage" > "$_ctmp" && mv "$_ctmp" "$cache_file" || rm -f "$_ctmp"
-        rm -f "$stale_marker" "$net_wait_marker" "$retry_at_marker" "$CACHE_DIR/.last_error" 2>/dev/null || true
-    elif [[ "$_http_code" == "000" ]]; then
-        # No HTTP response after the retry budget — network still settling or
-        # offline. Mark the episode so sibling instances skip their own long
-        # wait, then reuse recent cache with an in-memory stale flag (no .stale
-        # on disk), or show neutral "Loading…".
-        if [[ "$net_long" == "true" ]]; then touch "$net_wait_marker" 2>/dev/null || true; fi
-        if [[ -f "$cache_file" ]] && (( cache_age <= WEEKLY_WINDOW )); then
-            usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
-            transient_stale=true
-        else
-            loading_network
-        fi
-    elif [[ -f "$cache_file" ]]; then
-        usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
+    # Hard refresh failure (4xx/5xx, malformed) — preserve actionable signal.
+    if [[ -f "$cache_file" ]] && ((cache_age <= WEEKLY_WINDOW)); then
+      usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
+      if [[ ! -f "$stale_marker" ]]; then
         touch "$stale_marker"
-        if [[ "$_http_code" =~ ^[45][0-9]{2}$ ]]; then
-            _err_msg=$(jq -r '.error.message // empty' <<< "$_resp_body" 2>/dev/null) || true
-            # One line: the readers of .last_error take the second line only.
-            _err_msg="${_err_msg//[$'\r\n']/ }"
-            [[ -n "$_retry_note" ]] && _err_msg="${_err_msg:+$_err_msg }$_retry_note"
-            write_atomic "$CACHE_DIR/.last_error" ".last_error.XXXXXX" \
-                "$(printf '%s\n%s' "$_http_code" "$_err_msg")" || true
-        fi
-    elif [[ -n "$_retry_note" ]]; then
-        die "Rate limited.\n$_retry_note"
+        command -v notify-send &>/dev/null &&
+          notify-send -u normal -i dialog-warning \
+            "Claude Usage" "Token refresh failed. Check connection or run <b>claude</b>." 2>/dev/null || true
+      fi
     else
-        die "API request failed.\nCheck your connection."
+      die "Token refresh failed.\nCheck connection or run <b>claude</b>."
     fi
+    return
+  fi
+
+  # Auth OK — fetch from API. Transient failures (no HTTP response: DHCP/DNS
+  # still settling at boot, brief blip) are retried until the shared deadline —
+  # one missed dispatch otherwise means stale data for a full Waybar interval.
+  # The response headers go to a temp file in our own cache dir, the same way
+  # the cache write stages its own temp: `-D` is the portable way to read one
+  # response header (`%{retry_after}` is not in every curl — 8.20.0 rejects
+  # it) and the body capture must stay parseable, so it cannot go to stdout.
+  local -a _hdr_opt=()
+  local _hdr_file="" _hdrs="" _retry_secs=0
+  # The flock serializes fetches, so a `.hdr.*` that exists here is an
+  # orphan of a run that died mid-transfer; sweep it, then stage a fresh
+  # one per attempt so a death in the retry sleep leaves nothing behind.
+  rm -f "$CACHE_DIR"/.hdr.?????? 2>/dev/null || true
+
+  while :; do
+    [[ -n "$_hdr_file" ]] && { rm -f "$_hdr_file" 2>/dev/null || true; }
+    _hdr_file=$(mktemp "$CACHE_DIR/.hdr.XXXXXX" 2>/dev/null) || _hdr_file=""
+    _hdr_opt=()
+    [[ -n "$_hdr_file" ]] && _hdr_opt=(-D "$_hdr_file")
+    # Headers go in through a config file on stdin, never argv: an
+    # `-H "Authorization: Bearer …"` sits in /proc/<pid>/cmdline for the
+    # whole transfer, readable by every process of this user. The balance
+    # fetch below already did this; both now do. A rejected token yields an
+    # empty config, so curl asks unauthenticated and gets a 401 — it never
+    # gets attacker-written option lines.
+    _resp_body=$(curl_auth_cfg "$access_token" | curl -q --config - -s --max-time 10 \
+      --proto '=https' --max-filesize "$MAX_RESP_BYTES" "${_hdr_opt[@]}" \
+      -w '\n%{http_code}' "$API_URL") || true
+    # Belt for --max-filesize, and it is needed. Measured on curl 8.21.0: a
+    # Content-Length past the cap is refused before a byte is read, but a
+    # CHUNKED response is aborted only AFTER the cap is reached — and those
+    # 2 MiB are already in this variable, write-out suffix intact, so the
+    # split below would read a plausible 200 and hand the flood to jq.
+    # Drop the whole capture, and stop retrying: a server that floods once
+    # floods again.
+    if resp_too_big "$_resp_body"; then
+      _resp_body=""
+      _http_code="000"
+      break
+    fi
+    _http_code="${_resp_body##*$'\n'}"
+    _resp_body="${_resp_body%$'\n'"$_http_code"}"
+    # Normalize bogus codes (e.g. raw body without curl write-out suffix) to 000.
+    [[ "$_http_code" =~ ^[0-9]{3}$ ]] || _http_code="000"
+    if [[ "$_http_code" != "000" ]]; then break; fi
+    if ((SECONDS >= net_deadline)); then break; fi
+    sleep "$NET_RETRY_DELAY"
+  done
+
+  if [[ -n "$_hdr_file" ]]; then
+    _hdrs=$(read_bounded "$_hdr_file" "$MAX_STATE_BYTES") || _hdrs=""
+    rm -f "$_hdr_file" 2>/dev/null || true
+    _retry_secs=$(_retry_after_seconds "$_hdrs")
+  fi
+
+  # A 429 sets the wait BEFORE the cache decides what to show: the first 429
+  # of a fresh install has no cache, and it must not be the one that asks
+  # again. The time is announced only once it is on disk — a wait that was
+  # not kept is a wait the next run will not honour.
+  local _retry_note=""
+  if [[ "$_http_code" == "429" ]] && ((_retry_secs > 0)); then
+    _retry_at=$(($(date +%s) + _retry_secs))
+    if persist_retry_at "$_retry_at"; then
+      _retry_note="Retry at $(date -d "@$_retry_at" +%H:%M)."
+    fi
+  fi
+
+  if [[ "$_http_code" == "200" ]] && [[ -n "$_resp_body" ]] && jq -e '.five_hour' <<<"$_resp_body" &>/dev/null; then
+    usage="$_resp_body"
+    _ctmp=$(mktemp "$CACHE_DIR/.usage.XXXXXX")
+    printf '%s' "$usage" >"$_ctmp" && mv "$_ctmp" "$cache_file" || rm -f "$_ctmp"
+    rm -f "$stale_marker" "$net_wait_marker" "$retry_at_marker" "$CACHE_DIR/.last_error" 2>/dev/null || true
+  elif [[ "$_http_code" == "000" ]]; then
+    # No HTTP response after the retry budget — network still settling or
+    # offline. Mark the episode so sibling instances skip their own long
+    # wait, then reuse recent cache with an in-memory stale flag (no .stale
+    # on disk), or show neutral "Loading…".
+    if [[ "$net_long" == "true" ]]; then touch "$net_wait_marker" 2>/dev/null || true; fi
+    if [[ -f "$cache_file" ]] && ((cache_age <= WEEKLY_WINDOW)); then
+      usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
+      transient_stale=true
+    else
+      loading_network
+    fi
+  elif [[ -f "$cache_file" ]]; then
+    usage=$(read_bounded "$cache_file" "$MAX_STATE_BYTES") || usage=""
+    touch "$stale_marker"
+    if [[ "$_http_code" =~ ^[45][0-9]{2}$ ]]; then
+      _err_msg=$(jq -r '.error.message // empty' <<<"$_resp_body" 2>/dev/null) || true
+      # One line: the readers of .last_error take the second line only.
+      _err_msg="${_err_msg//[$'\r\n']/ }"
+      [[ -n "$_retry_note" ]] && _err_msg="${_err_msg:+$_err_msg }$_retry_note"
+      write_atomic "$CACHE_DIR/.last_error" ".last_error.XXXXXX" \
+        "$(printf '%s\n%s' "$_http_code" "$_err_msg")" || true
+    fi
+  elif [[ -n "$_retry_note" ]]; then
+    die "Rate limited.\n$_retry_note"
+  else
+    die "API request failed.\nCheck your connection."
+  fi
 }
 
 _fetch_balance() {
-    # No usage-credit ledger means there is nothing to query. Keep this
-    # best-effort: usage windows must remain available even if the separate
-    # prepaid endpoint is unavailable or changes upstream.
-    local _has_credits
-    _has_credits=$(jq 'try (.extra_usage != null) catch false' <<< "$usage" 2>/dev/null) || _has_credits=false
-    [[ "$_has_credits" == "true" && "$auth_ok" == "true" ]] || return 0
+  # No usage-credit ledger means there is nothing to query. Keep this
+  # best-effort: usage windows must remain available even if the separate
+  # prepaid endpoint is unavailable or changes upstream.
+  local _has_credits
+  _has_credits=$(jq 'try (.extra_usage != null) catch false' <<<"$usage" 2>/dev/null) || _has_credits=false
+  [[ "$_has_credits" == "true" && "$auth_ok" == "true" ]] || return 0
 
-    local _org_uuid="${CLAUDE_CODE_ORGANIZATION_UUID:-}"
-    if [[ -z "$_org_uuid" ]]; then
-        # This file belongs to the CLI, not to us, so it is read like every
-        # other foreign file: through read_bounded, and handed to jq on stdin
-        # instead of letting jq open the path. `[[ -f ]]` alone let a regular
-        # file of any size through, and jq on a file that keeps growing may
-        # never finish — inside the shell process that is the whole shell.
-        # An oversize read degrades to "no organization UUID", which is the
-        # branch this function already takes when the file is not there.
-        local _claude_json
-        _claude_json=$(read_bounded "$HOME/.claude.json" "$MAX_CLAUDE_JSON_BYTES") || _claude_json=""
-        if read_was_truncated "$_claude_json" "$MAX_CLAUDE_JSON_BYTES"; then _claude_json=""; fi
-        _org_uuid=$(jq -r 'try ((.oauthAccount.organizationUuid | strings) // "") catch ""' \
-            <<< "$_claude_json" 2>/dev/null) || _org_uuid=""
-    fi
-    # The identifier is inserted into a URL path, so reject anything beyond
-    # Claude's UUID-like alphabet instead of letting account data shape curl.
-    [[ "$_org_uuid" =~ ^[A-Za-z0-9-]+$ ]] || return 0
+  local _org_uuid="${CLAUDE_CODE_ORGANIZATION_UUID:-}"
+  if [[ -z "$_org_uuid" ]]; then
+    # This file belongs to the CLI, not to us, so it is read like every
+    # other foreign file: through read_bounded, and handed to jq on stdin
+    # instead of letting jq open the path. `[[ -f ]]` alone let a regular
+    # file of any size through, and jq on a file that keeps growing may
+    # never finish — inside the shell process that is the whole shell.
+    # An oversize read degrades to "no organization UUID", which is the
+    # branch this function already takes when the file is not there.
+    local _claude_json
+    _claude_json=$(read_bounded "$HOME/.claude.json" "$MAX_CLAUDE_JSON_BYTES") || _claude_json=""
+    if read_was_truncated "$_claude_json" "$MAX_CLAUDE_JSON_BYTES"; then _claude_json=""; fi
+    _org_uuid=$(jq -r 'try ((.oauthAccount.organizationUuid | strings) // "") catch ""' \
+      <<<"$_claude_json" 2>/dev/null) || _org_uuid=""
+  fi
+  # The identifier is inserted into a URL path, so reject anything beyond
+  # Claude's UUID-like alphabet instead of letting account data shape curl.
+  [[ "$_org_uuid" =~ ^[A-Za-z0-9-]+$ ]] || return 0
 
-    local _credits_age=-1
-    if [[ -f "$credits_file" ]]; then
-        _credits_age=$(( now_s - $(date -r "$credits_file" +%s) ))
-    fi
-    if [[ "$FORCE_REFRESH" != "true" ]] && (( _credits_age >= 0 && _credits_age < CACHE_TTL )); then
-        return
-    fi
+  local _credits_age=-1
+  if [[ -f "$credits_file" ]]; then
+    _credits_age=$((now_s - $(date -r "$credits_file" +%s)))
+  fi
+  if [[ "$FORCE_REFRESH" != "true" ]] && ((_credits_age >= 0 && _credits_age < CACHE_TTL)); then
+    return
+  fi
 
-    local _credits_url="${API_BASE_URL}/api/oauth/organizations/${_org_uuid}/prepaid/credits"
-    local _credits_raw _credits_code _credits_body
-    # Feed the bearer header through stdin so the token never appears in the
-    # curl argv/process list, and through the guarded builder so it cannot
-    # carry option lines of its own.
-    _credits_raw=$(curl_auth_cfg "$access_token" | curl -q --config - -s --max-time 10 \
-        --proto '=https' --max-filesize "$MAX_RESP_BYTES" \
-        -w '\n%{http_code}' "$_credits_url") || true
-    # Same belt as the usage fetch; there is no retry loop here to break out of,
-    # so an oversize capture just becomes "no answer" and the cache is left be.
-    if resp_too_big "$_credits_raw"; then _credits_raw=""; fi
-    _credits_code="${_credits_raw##*$'\n'}"
-    _credits_body="${_credits_raw%$'\n'"$_credits_code"}"
-    [[ "$_credits_code" =~ ^[0-9]{3}$ ]] || _credits_code="000"
+  local _credits_url="${API_BASE_URL}/api/oauth/organizations/${_org_uuid}/prepaid/credits"
+  local _credits_raw _credits_code _credits_body
+  # Feed the bearer header through stdin so the token never appears in the
+  # curl argv/process list, and through the guarded builder so it cannot
+  # carry option lines of its own.
+  _credits_raw=$(curl_auth_cfg "$access_token" | curl -q --config - -s --max-time 10 \
+    --proto '=https' --max-filesize "$MAX_RESP_BYTES" \
+    -w '\n%{http_code}' "$_credits_url") || true
+  # Same belt as the usage fetch; there is no retry loop here to break out of,
+  # so an oversize capture just becomes "no answer" and the cache is left be.
+  if resp_too_big "$_credits_raw"; then _credits_raw=""; fi
+  _credits_code="${_credits_raw##*$'\n'}"
+  _credits_body="${_credits_raw%$'\n'"$_credits_code"}"
+  [[ "$_credits_code" =~ ^[0-9]{3}$ ]] || _credits_code="000"
 
-    if [[ "$_credits_code" == "200" ]] && jq -e -s '
+  if [[ "$_credits_code" == "200" ]] && jq -e -s '
         length == 1 and (.[0] | type) == "object"
         and ((.[0].amount | type) == "number")
         and (.[0].amount >= 0) and (.[0].amount <= 1e12)
-      ' <<< "$_credits_body" &>/dev/null; then
-        local _btmp
-        _btmp=$(mktemp "$CACHE_DIR/.credits.XXXXXX" 2>/dev/null) || _btmp=""
-        if [[ -n "$_btmp" ]]; then
-            if printf '%s' "$_credits_body" > "$_btmp" && mv "$_btmp" "$credits_file"; then
-                :
-            else
-                rm -f "$_btmp" 2>/dev/null || true
-            fi
-        fi
+      ' <<<"$_credits_body" &>/dev/null; then
+    local _btmp
+    _btmp=$(mktemp "$CACHE_DIR/.credits.XXXXXX" 2>/dev/null) || _btmp=""
+    if [[ -n "$_btmp" ]]; then
+      if printf '%s' "$_credits_body" >"$_btmp" && mv "$_btmp" "$credits_file"; then
+        :
+      else
+        rm -f "$_btmp" 2>/dev/null || true
+      fi
     fi
+  fi
 }
 
 # --- Acquire lock for the state-changing window (refresh + usage fetch) ---
@@ -1318,8 +1568,8 @@ _fetch_balance() {
 # that is NOT a regular file is refused. A peer instance only ever leaves a
 # regular file here, so anything else is hostile and worth saying out loud.
 if [[ -e /dev/fd/9 && ! -f /dev/fd/9 ]]; then
-    exec 9>&-
-    die "Cache lock is not a regular file.\nRemove $_lockfile."
+  exec 9>&-
+  die "Cache lock is not a regular file.\nRemove $_lockfile."
 fi
 # Generous wait: a boot-like sibling may hold the lock for the long budget plus
 # in-flight curls (worst ≈ NET_LONG_BUDGET + 25s refresh + 10s fetch ≈ 57s);
@@ -1329,41 +1579,41 @@ flock -w 90 9 || die "Cache lock timeout"
 # --- Transient retry budget (shared by token refresh and usage fetch) ---
 now_s=$(date +%s)
 cache_age=-1
-[[ -f "$cache_file" ]] && cache_age=$(( now_s - $(date -r "$cache_file" +%s) ))
+[[ -f "$cache_file" ]] && cache_age=$((now_s - $(date -r "$cache_file" +%s)))
 # Missing cache or future mtime (clock skew) → boot-like, never "fresh".
-if (( cache_age < 0 )); then cache_age=$(( NET_BOOT_CACHE_AGE + 1 )); fi
+if ((cache_age < 0)); then cache_age=$((NET_BOOT_CACHE_AGE + 1)); fi
 net_budget=$NET_QUICK_BUDGET
 net_long=false
-if (( cache_age > NET_BOOT_CACHE_AGE )); then
-    net_budget=$NET_LONG_BUDGET
-    net_long=true
-    if [[ -f "$net_wait_marker" ]]; then
-        _nw_age=$(( now_s - $(date -r "$net_wait_marker" +%s) ))
-        # A sibling already burned the long budget this episode — single
-        # attempt, no sleeps. Future mtimes (clock skew) don't count.
-        if (( _nw_age >= 0 && _nw_age <= NET_WAIT_RECENT )); then
-            net_budget=0
-            net_long=false
-        fi
+if ((cache_age > NET_BOOT_CACHE_AGE)); then
+  net_budget=$NET_LONG_BUDGET
+  net_long=true
+  if [[ -f "$net_wait_marker" ]]; then
+    _nw_age=$((now_s - $(date -r "$net_wait_marker" +%s)))
+    # A sibling already burned the long budget this episode — single
+    # attempt, no sleeps. Future mtimes (clock skew) don't count.
+    if ((_nw_age >= 0 && _nw_age <= NET_WAIT_RECENT)); then
+      net_budget=0
+      net_long=false
     fi
+  fi
 fi
-net_deadline=$(( SECONDS + net_budget ))
+net_deadline=$((SECONDS + net_budget))
 
 # Re-read mutable credential fields under the lock.
 [[ -f "$CREDS" ]] || die "No credentials.\nRun <b>claude</b> to log in."
 creds=$(read_bounded "$CREDS" "$MAX_STATE_BYTES") || creds=""
-jq -e . <<< "$creds" &>/dev/null || die "Invalid credentials file.\nRun <b>claude</b> to log in."
-access_token=$(jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' <<< "$creds")
+jq -e . <<<"$creds" &>/dev/null || die "Invalid credentials file.\nRun <b>claude</b> to log in."
+access_token=$(jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' <<<"$creds")
 # A token that cannot go into a curl config file is not a token this script can
 # use at all, so it is dropped here and the empty check below reports it the
 # way a missing one is reported. Rejecting at the SOURCE, not at the call site,
 # is what keeps every later use safe.
 token_is_safe "$access_token" || access_token=""
-refresh_token=$(jq -r 'try (.claudeAiOauth.refreshToken // empty) catch empty' <<< "$creds")
-expires_at=$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' <<< "$creds")
+refresh_token=$(jq -r 'try (.claudeAiOauth.refreshToken // empty) catch empty' <<<"$creds")
+expires_at=$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' <<<"$creds")
 expires_at="${expires_at%%.*}" # truncate float (e.g. 5000.0 → 5000)
 [[ "$expires_at" =~ ^[0-9]+$ ]] || expires_at=0
-expires_s=$(( expires_at / 1000 ))
+expires_s=$((expires_at / 1000))
 auth_ok=true
 refresh_failure_kind=""
 transient_stale=false
@@ -1379,137 +1629,137 @@ transient_stale=false
 # cannot be persisted must not run at all — skipping it leaves the stored
 # tokens untouched for the next run to retry.
 cred_tmp=""
-if (( expires_s < now_s + REFRESH_BUFFER )); then
-    cred_tmp=$(mktemp "${CREDS%/*}/.credentials.XXXXXX" 2>/dev/null) || cred_tmp=""
-    if [[ -z "$cred_tmp" ]]; then
-        auth_ok=false
-        refresh_failure_kind="transient"
-    fi
+if ((expires_s < now_s + REFRESH_BUFFER)); then
+  cred_tmp=$(mktemp "${CREDS%/*}/.credentials.XXXXXX" 2>/dev/null) || cred_tmp=""
+  if [[ -z "$cred_tmp" ]]; then
+    auth_ok=false
+    refresh_failure_kind="transient"
+  fi
 fi
 
 if [[ -n "$cred_tmp" ]]; then
-    # Synchronous refresh — 25s timeout covers cold boot when DHCP is still settling.
-    # Transient failures (no HTTP response) are retried until the shared deadline —
-    # same policy as the usage fetch — so a cold-boot race doesn't cost a full interval.
-    # The refresh token goes to jq on STDIN (b64_lines), not through `--arg`:
-    # an argument sits in jq's own /proc/<pid>/cmdline, which is world
-    # readable, and moving the secret out of curl's argv while leaving it in
-    # jq's argv moves nothing. Not the environment either: a secret has no
-    # business in a child's environment, owner-only or not. Base64 because the
-    # stored refresh token is not validated, so nothing promises it is ASCII.
-    # $CLIENT_ID stays an argument — it is the public Claude CLI client ID,
-    # not a secret.
-    refresh_body=$(b64_lines "$refresh_token" | jq -nRc --arg ci "$CLIENT_ID" \
-                     '{grant_type:"refresh_token", client_id:$ci, refresh_token:(input | @base64d)}')
-    while :; do
-        # The secret here is the POST BODY, not a header: `--data "$refresh_body"`
-        # puts the refresh token straight into argv. `--data @-` reads it from
-        # stdin instead. The body is compact single-line JSON, so the newline
-        # stripping that @- applies changes nothing. None of these headers is
-        # secret, so they stay on the command line.
-        refresh_raw=$(printf '%s' "$refresh_body" | curl -q -s --max-time 25 \
-            --proto '=https' --max-filesize "$MAX_RESP_BYTES" \
-            -w '\n%{http_code}' -X POST "$TOKEN_URL" \
-            -H "Content-Type: application/json" \
-            -H "anthropic-beta: oauth-2025-04-20" \
-            -H "User-Agent: claude-cli/1.0" \
-            --data @-) || true
-        # Belt for --max-filesize on a chunked body; see the usage fetch.
-        if resp_too_big "$refresh_raw"; then
-            refresh_raw=""
-            refresh_code="000"
-            resp=""
-            break
-        fi
-        refresh_code="${refresh_raw##*$'\n'}"
-        resp="${refresh_raw%$'\n'"$refresh_code"}"
-        # Normalize bogus codes (e.g. raw body without curl write-out suffix) to 000.
-        [[ "$refresh_code" =~ ^[0-9]{3}$ ]] || refresh_code="000"
-        if [[ "$refresh_code" != "000" ]]; then break; fi
-        if (( SECONDS >= net_deadline )); then break; fi
-        sleep "$NET_RETRY_DELAY"
-    done
+  # Synchronous refresh — 25s timeout covers cold boot when DHCP is still settling.
+  # Transient failures (no HTTP response) are retried until the shared deadline —
+  # same policy as the usage fetch — so a cold-boot race doesn't cost a full interval.
+  # The refresh token goes to jq on STDIN (b64_lines), not through `--arg`:
+  # an argument sits in jq's own /proc/<pid>/cmdline, which is world
+  # readable, and moving the secret out of curl's argv while leaving it in
+  # jq's argv moves nothing. Not the environment either: a secret has no
+  # business in a child's environment, owner-only or not. Base64 because the
+  # stored refresh token is not validated, so nothing promises it is ASCII.
+  # $CLIENT_ID stays an argument — it is the public Claude CLI client ID,
+  # not a secret.
+  refresh_body=$(b64_lines "$refresh_token" | jq -nRc --arg ci "$CLIENT_ID" \
+    '{grant_type:"refresh_token", client_id:$ci, refresh_token:(input | @base64d)}')
+  while :; do
+    # The secret here is the POST BODY, not a header: `--data "$refresh_body"`
+    # puts the refresh token straight into argv. `--data @-` reads it from
+    # stdin instead. The body is compact single-line JSON, so the newline
+    # stripping that @- applies changes nothing. None of these headers is
+    # secret, so they stay on the command line.
+    refresh_raw=$(printf '%s' "$refresh_body" | curl -q -s --max-time 25 \
+      --proto '=https' --max-filesize "$MAX_RESP_BYTES" \
+      -w '\n%{http_code}' -X POST "$TOKEN_URL" \
+      -H "Content-Type: application/json" \
+      -H "anthropic-beta: oauth-2025-04-20" \
+      -H "User-Agent: claude-cli/1.0" \
+      --data @-) || true
+    # Belt for --max-filesize on a chunked body; see the usage fetch.
+    if resp_too_big "$refresh_raw"; then
+      refresh_raw=""
+      refresh_code="000"
+      resp=""
+      break
+    fi
+    refresh_code="${refresh_raw##*$'\n'}"
+    resp="${refresh_raw%$'\n'"$refresh_code"}"
+    # Normalize bogus codes (e.g. raw body without curl write-out suffix) to 000.
+    [[ "$refresh_code" =~ ^[0-9]{3}$ ]] || refresh_code="000"
+    if [[ "$refresh_code" != "000" ]]; then break; fi
+    if ((SECONDS >= net_deadline)); then break; fi
+    sleep "$NET_RETRY_DELAY"
+  done
 
-    # The refreshed token is the SECOND way one reaches the curl config, and it
-    # comes off the wire, so it is validated exactly like the stored one. A
-    # non-string or option-carrying `.access_token` now fails the refresh
-    # instead of being written back into the credentials file.
-    _new_token=$(jq -r 'try ((.access_token | strings) // "") catch ""' <<< "$resp" 2>/dev/null) || _new_token=""
-    if [[ "$refresh_code" == "200" ]] && token_is_safe "$_new_token"; then
-        access_token="$_new_token"
-        new_refresh=$(jq -r '.refresh_token // empty' <<< "$resp")
-        expires_in=$(jq -r 'try (((.expires_in | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$resp")
-        expires_in="${expires_in%%.*}" # truncate float (e.g. 3600.0 → 3600)
-        [[ "$expires_in" =~ ^[0-9]+$ ]] || expires_in=3600
-        new_expires_at=$(( $(date +%s) * 1000 + expires_in * 1000 ))
+  # The refreshed token is the SECOND way one reaches the curl config, and it
+  # comes off the wire, so it is validated exactly like the stored one. A
+  # non-string or option-carrying `.access_token` now fails the refresh
+  # instead of being written back into the credentials file.
+  _new_token=$(jq -r 'try ((.access_token | strings) // "") catch ""' <<<"$resp" 2>/dev/null) || _new_token=""
+  if [[ "$refresh_code" == "200" ]] && token_is_safe "$_new_token"; then
+    access_token="$_new_token"
+    new_refresh=$(jq -r '.refresh_token // empty' <<<"$resp")
+    expires_in=$(jq -r 'try (((.expires_in | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<<"$resp")
+    expires_in="${expires_in%%.*}" # truncate float (e.g. 3600.0 → 3600)
+    [[ "$expires_in" =~ ^[0-9]+$ ]] || expires_in=3600
+    new_expires_at=$(($(date +%s) * 1000 + expires_in * 1000))
 
-        # Re-read before replacing: the flock serializes claudebar instances,
-        # but NOT the claude CLI, and the POST above takes seconds. If the file
-        # changed under us (or the re-read comes back truncated), the CLI
-        # refreshed on its own — its tokens are the fresher ones, so ours are
-        # dropped instead of overwriting its write. Best-effort mitigation, not
-        # a CAS: the check-then-rename window is milliseconds, and a writer
-        # landing inside it still gets clobbered.
-        current=$(read_bounded "$CREDS" "$MAX_STATE_BYTES") || current=""
-        if [[ "$current" == "$creds" ]] && ! read_was_truncated "$current" "$MAX_STATE_BYTES"; then
-            # Both tokens reach jq through a pipe, for the same reason as the
-            # request body above: `--arg at "$access_token"` publishes the
-            # fresh bearer in jq's command line to every local user. stdin
-            # already carries the credentials document, so the tokens come in
-            # on a process substitution — argv shows only /dev/fd/N. The
-            # expiry is a number and public, so it stays an argument. An empty
-            # $at can only mean the pipe failed (the bearer passed
-            # token_is_safe, so it is never empty): jq errors out, and the
-            # chain below drops the temp instead of writing a blank token.
-            jq --argjson ea "$new_expires_at" \
-               --rawfile tokens <(b64_lines "$access_token" "${new_refresh:-$refresh_token}") \
-               '($tokens | split("\n") | map(@base64d)) as [$at, $rt]
+    # Re-read before replacing: the flock serializes claudebar instances,
+    # but NOT the claude CLI, and the POST above takes seconds. If the file
+    # changed under us (or the re-read comes back truncated), the CLI
+    # refreshed on its own — its tokens are the fresher ones, so ours are
+    # dropped instead of overwriting its write. Best-effort mitigation, not
+    # a CAS: the check-then-rename window is milliseconds, and a writer
+    # landing inside it still gets clobbered.
+    current=$(read_bounded "$CREDS" "$MAX_STATE_BYTES") || current=""
+    if [[ "$current" == "$creds" ]] && ! read_was_truncated "$current" "$MAX_STATE_BYTES"; then
+      # Both tokens reach jq through a pipe, for the same reason as the
+      # request body above: `--arg at "$access_token"` publishes the
+      # fresh bearer in jq's command line to every local user. stdin
+      # already carries the credentials document, so the tokens come in
+      # on a process substitution — argv shows only /dev/fd/N. The
+      # expiry is a number and public, so it stays an argument. An empty
+      # $at can only mean the pipe failed (the bearer passed
+      # token_is_safe, so it is never empty): jq errors out, and the
+      # chain below drops the temp instead of writing a blank token.
+      jq --argjson ea "$new_expires_at" \
+        --rawfile tokens <(b64_lines "$access_token" "${new_refresh:-$refresh_token}") \
+        '($tokens | split("\n") | map(@base64d)) as [$at, $rt]
                 | if ($at // "") == "" then error("token pipe failed") else . end
                 | .claudeAiOauth.accessToken=$at | .claudeAiOauth.refreshToken=$rt | .claudeAiOauth.expiresAt=$ea' \
-               <<< "$creds" > "$cred_tmp" && mv "$cred_tmp" "$CREDS" \
-               || rm -f "$cred_tmp" 2>/dev/null || true
-        else
-            rm -f "$cred_tmp" 2>/dev/null || true
-        fi
-        rm -f "$CACHE_DIR/.last_error" 2>/dev/null || true
-    else
-        auth_ok=false
+        <<<"$creds" >"$cred_tmp" && mv "$cred_tmp" "$CREDS" ||
         rm -f "$cred_tmp" 2>/dev/null || true
-        if [[ "$refresh_code" == "000" ]]; then
-            # No HTTP response reached us — DHCP/DNS settling at boot, offline,
-            # or actual timeout. Mark the episode so sibling instances skip
-            # their own long wait; nothing else persists.
-            refresh_failure_kind="transient"
-            if [[ "$net_long" == "true" ]]; then touch "$net_wait_marker" 2>/dev/null || true; fi
-        else
-            refresh_failure_kind="hard"
-            # Always write a current .last_error so the tooltip reflects this refresh
-            # failure, never a leftover entry from a previous /usage call.
-            refresh_err=""
-            if [[ "$refresh_code" =~ ^[45][0-9]{2}$ ]]; then
-                # platform.claude.com returns OAuth-style {error,error_description};
-                # fall back to Anthropic-style {error:{message}} or bare {error:"<str>"}.
-                refresh_err=$(jq -r '
+    else
+      rm -f "$cred_tmp" 2>/dev/null || true
+    fi
+    rm -f "$CACHE_DIR/.last_error" 2>/dev/null || true
+  else
+    auth_ok=false
+    rm -f "$cred_tmp" 2>/dev/null || true
+    if [[ "$refresh_code" == "000" ]]; then
+      # No HTTP response reached us — DHCP/DNS settling at boot, offline,
+      # or actual timeout. Mark the episode so sibling instances skip
+      # their own long wait; nothing else persists.
+      refresh_failure_kind="transient"
+      if [[ "$net_long" == "true" ]]; then touch "$net_wait_marker" 2>/dev/null || true; fi
+    else
+      refresh_failure_kind="hard"
+      # Always write a current .last_error so the tooltip reflects this refresh
+      # failure, never a leftover entry from a previous /usage call.
+      refresh_err=""
+      if [[ "$refresh_code" =~ ^[45][0-9]{2}$ ]]; then
+        # platform.claude.com returns OAuth-style {error,error_description};
+        # fall back to Anthropic-style {error:{message}} or bare {error:"<str>"}.
+        refresh_err=$(jq -r '
                     if (.error_description | type) == "string" then .error_description
                     elif (.error | type) == "object" and (.error | has("message")) and (.error.message | type) == "string" then .error.message
                     elif (.error | type) == "string" then .error
-                    else "" end' <<< "$resp" 2>/dev/null) || true
-                [[ -z "$refresh_err" ]] && refresh_err="Refresh failed"
-            else
-                refresh_err="Invalid refresh response"
-            fi
-            # Best-effort write — never abort the widget if the cache dir is unwriteable.
-            _le_tmp=$(mktemp "$CACHE_DIR/.last_error.XXXXXX" 2>/dev/null) || _le_tmp=""
-            if [[ -n "$_le_tmp" ]]; then
-                if printf '%s\n%s' "$refresh_code" "$refresh_err" > "$_le_tmp" 2>/dev/null \
-                   && mv "$_le_tmp" "$CACHE_DIR/.last_error" 2>/dev/null; then
-                    :
-                else
-                    rm -f "$_le_tmp" 2>/dev/null || true
-                fi
-            fi
+                    else "" end' <<<"$resp" 2>/dev/null) || true
+        [[ -z "$refresh_err" ]] && refresh_err="Refresh failed"
+      else
+        refresh_err="Invalid refresh response"
+      fi
+      # Best-effort write — never abort the widget if the cache dir is unwriteable.
+      _le_tmp=$(mktemp "$CACHE_DIR/.last_error.XXXXXX" 2>/dev/null) || _le_tmp=""
+      if [[ -n "$_le_tmp" ]]; then
+        if printf '%s\n%s' "$refresh_code" "$refresh_err" >"$_le_tmp" 2>/dev/null &&
+          mv "$_le_tmp" "$CACHE_DIR/.last_error" 2>/dev/null; then
+          :
+        else
+          rm -f "$_le_tmp" 2>/dev/null || true
         fi
+      fi
     fi
+  fi
 fi
 
 _fetch_usage
@@ -1519,46 +1769,50 @@ exec 9>&-
 # A corrupt or partially-written cache could leave $usage as invalid JSON; the
 # per-field try/catch reads can't catch a jq *parse* error, so guard the whole
 # payload here (degrades to a clear warning, still exit 0).
-jq -e -s 'length == 1' <<< "$usage" &>/dev/null || die "Invalid usage data.\nWill refresh next cycle."
+jq -e -s 'length == 1' <<<"$usage" &>/dev/null || die "Invalid usage data.\nWill refresh next cycle."
 
 # --- Parse windows ---
 # round in jq -> integer literal. A bare float ("13.0") fed to printf '%.0f'
 # is rejected as "invalid number" under comma-decimal locales (es_AR, de_DE, ...),
 # where strtod won't accept the period.
 parse_pct() {
-    jq -r "try (((.$1.utilization | numbers) // 0) | round | if (. > 1e12 or . < 0) then 0 else . end) catch 0" <<< "$usage"
+  jq -r "try (((.$1.utilization | numbers) // 0) | round | if (. > 1e12 or . < 0) then 0 else . end) catch 0" <<<"$usage"
 }
 
 parse_reset() {
-    jq -r "try (.$1.resets_at // empty) catch empty" <<< "$usage"
+  jq -r "try (.$1.resets_at // empty) catch empty" <<<"$usage"
 }
 
 # Remaining percent for a window: 100 - used, clamped 0..100. Clamps ONLY its own
 # output — never mutates the source used pct (that would change no-flag output).
 remaining_pct_for() {
-    local r=$(( 100 - $1 ))
-    (( r < 0 )) && r=0
-    (( r > 100 )) && r=100
-    echo "$r"
+  local r=$((100 - $1))
+  ((r < 0)) && r=0
+  ((r > 100)) && r=100
+  echo "$r"
 }
 
 # Framing helpers: usage by default, "remaining" when --remaining. Centralized so the
 # no-flag path is byte-identical and the rendered bar/number never diverge.
-display_pct() {  # <used_pct>
-    if [[ "$REMAINING" == "true" ]]; then remaining_pct_for "$1"; else echo "$1"; fi
+display_pct() { # <used_pct>
+  if [[ "$REMAINING" == "true" ]]; then remaining_pct_for "$1"; else echo "$1"; fi
 }
-display_bar() {  # <used_pct> <elapsed> [marker_on]  (marker_on: pass "$TOOLTIP_PACE_PTS")
-    local used=$1 elapsed=$2 marker_on=${3:-}
-    local color; color=$(color_for "$used")
-    if [[ "$REMAINING" == "true" ]]; then
-        local rem; rem=$(remaining_pct_for "$used")
-        if [[ "$marker_on" == "true" ]]; then make_bar "$rem" "$color" "$(( 100 - elapsed ))" "$MARKER"
-        else make_bar "$rem" "$color"; fi
-    else
-        # Usage framing: per-cell gradient fill (empty color arg).
-        if [[ "$marker_on" == "true" ]]; then make_bar "$used" "" "$elapsed" "$MARKER"
-        else make_bar "$used" ""; fi
-    fi
+display_bar() { # <used_pct> <elapsed> [marker_on]  (marker_on: pass "$TOOLTIP_PACE_PTS")
+  local used=$1 elapsed=$2 marker_on=${3:-}
+  local color
+  color=$(color_for "$used")
+  if [[ "$REMAINING" == "true" ]]; then
+    local rem
+    rem=$(remaining_pct_for "$used")
+    if [[ "$marker_on" == "true" ]]; then
+      make_bar "$rem" "$color" "$((100 - elapsed))" "$MARKER"
+    else make_bar "$rem" "$color"; fi
+  else
+    # Usage framing: per-cell gradient fill (empty color arg).
+    if [[ "$marker_on" == "true" ]]; then
+      make_bar "$used" "" "$elapsed" "$MARKER"
+    else make_bar "$used" ""; fi
+  fi
 }
 
 session_pct=$(parse_pct five_hour)
@@ -1566,12 +1820,12 @@ session_reset=$(parse_reset five_hour)
 weekly_pct=$(parse_pct seven_day)
 weekly_reset=$(parse_reset seven_day)
 
-has_sonnet=$(jq 'try (.seven_day_sonnet != null) catch false' <<< "$usage")
+has_sonnet=$(jq 'try (.seven_day_sonnet != null) catch false' <<<"$usage")
 sonnet_pct=0
 sonnet_reset=""
 if [[ "$has_sonnet" == "true" ]]; then
-    sonnet_pct=$(parse_pct seven_day_sonnet)
-    sonnet_reset=$(parse_reset seven_day_sonnet)
+  sonnet_pct=$(parse_pct seven_day_sonnet)
+  sonnet_reset=$(parse_reset seven_day_sonnet)
 fi
 
 # --- Model-scoped weekly limits (e.g. Fable) ---
@@ -1597,26 +1851,26 @@ readarray -t _model_rows < <(jq -r --argjson skip_sonnet "$has_sonnet" '
         | [ ((.scope.model.display_name | strings) // "Model" | clean | esc),
             (((.percent | numbers) // 0) | round | if (. > 1e12 or . < 0) then 0 else . end | tostring),
             ((.resets_at | strings) // "" | gsub("[[:cntrl:]]"; "")) ]
-        | join("\t"))) catch empty' <<< "$usage")
+        | join("\t"))) catch empty' <<<"$usage")
 
 has_model=false
 model_names_esc=() model_pcts=() model_resets=()
 model_max_pct=0
 for _row in "${_model_rows[@]}"; do
-    IFS=$'\t' read -r _mn _mp _mr <<< "$_row"
-    model_names_esc+=("$_mn")
-    model_pcts+=("${_mp:-0}")
-    model_resets+=("${_mr:-}")
-    (( ${_mp:-0} > model_max_pct )) && model_max_pct=${_mp:-0}
+  IFS=$'\t' read -r _mn _mp _mr <<<"$_row"
+  model_names_esc+=("$_mn")
+  model_pcts+=("${_mp:-0}")
+  model_resets+=("${_mr:-}")
+  ((${_mp:-0} > model_max_pct)) && model_max_pct=${_mp:-0}
 done
 model_name_esc=""
 model_pct=0
 model_reset=""
-if (( ${#model_pcts[@]} > 0 )); then
-    model_name_esc="${model_names_esc[0]}"
-    model_pct="${model_pcts[0]}"
-    model_reset="${model_resets[0]}"
-    has_model=true
+if ((${#model_pcts[@]} > 0)); then
+  model_name_esc="${model_names_esc[0]}"
+  model_pct="${model_pcts[0]}"
+  model_reset="${model_resets[0]}"
+  has_model=true
 fi
 
 session_remaining_pct=$(remaining_pct_for "$session_pct")
@@ -1629,7 +1883,7 @@ model_remaining_pct=$(remaining_pct_for "$model_pct")
 # reports is_enabled=false (disabled_reason "out_of_credits") once the balance is
 # depleted, but month-to-date spend and the cap remain present. Gating on
 # is_enabled hid the useful spending history in that state.
-has_extra=$(jq 'try (.extra_usage != null) catch false' <<< "$usage")
+has_extra=$(jq 'try (.extra_usage != null) catch false' <<<"$usage")
 extra_show="false"
 extra_spent=""
 extra_available=""
@@ -1641,150 +1895,153 @@ extra_balance_known=false
 local_available=0
 local_funded=0
 if [[ "$has_extra" == "true" ]]; then
-    local_limit=$(jq -r 'try (((.extra_usage.monthly_limit | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$usage")
-    local_used=$(jq -r 'try (((.extra_usage.used_credits | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$usage")
-    disabled_reason=$(jq -r 'try ((.extra_usage.disabled_reason | strings) // "") catch ""' <<< "$usage")
+  local_limit=$(jq -r 'try (((.extra_usage.monthly_limit | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<<"$usage")
+  local_used=$(jq -r 'try (((.extra_usage.used_credits | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<<"$usage")
+  disabled_reason=$(jq -r 'try ((.extra_usage.disabled_reason | strings) // "") catch ""' <<<"$usage")
 
-    # The prepaid balance is independent from the monthly spending limit. Use
-    # the separately cached ledger response when it is a safe non-negative
-    # integer; if Claude explicitly says the ledger is exhausted, zero is exact.
-    # Any other missing/malformed balance stays unknown — never substitute the
-    # monthly limit, which is only a safety cap.
-    _credits_fresh=false
-    if [[ -f "$credits_file" ]]; then
-        _credits_age=$(( $(date +%s) - $(date -r "$credits_file" +%s) ))
-        (( _credits_age >= 0 && _credits_age < CACHE_TTL )) && _credits_fresh=true
-    fi
-    # Read once, bounded, and validate the copy: two separate jq passes over the
-    # file would also read it twice, and a peer instance can swap it in between.
-    _credits_cached=""
-    if [[ "$_credits_fresh" == "true" ]]; then
-        _credits_cached=$(read_bounded "$credits_file" "$MAX_STATE_BYTES") || _credits_cached=""
-    fi
-    if [[ -n "$_credits_cached" ]] && jq -e -s '
+  # The prepaid balance is independent from the monthly spending limit. Use
+  # the separately cached ledger response when it is a safe non-negative
+  # integer; if Claude explicitly says the ledger is exhausted, zero is exact.
+  # Any other missing/malformed balance stays unknown — never substitute the
+  # monthly limit, which is only a safety cap.
+  _credits_fresh=false
+  if [[ -f "$credits_file" ]]; then
+    _credits_age=$(($(date +%s) - $(date -r "$credits_file" +%s)))
+    ((_credits_age >= 0 && _credits_age < CACHE_TTL)) && _credits_fresh=true
+  fi
+  # Read once, bounded, and validate the copy: two separate jq passes over the
+  # file would also read it twice, and a peer instance can swap it in between.
+  _credits_cached=""
+  if [[ "$_credits_fresh" == "true" ]]; then
+    _credits_cached=$(read_bounded "$credits_file" "$MAX_STATE_BYTES") || _credits_cached=""
+  fi
+  if [[ -n "$_credits_cached" ]] && jq -e -s '
         length == 1 and (.[0] | type) == "object"
         and ((.[0].amount | type) == "number")
         and (.[0].amount >= 0) and (.[0].amount <= 1e12)
-      ' <<< "$_credits_cached" &>/dev/null; then
-        local_available=$(jq -r '.amount | floor' <<< "$_credits_cached")
-        extra_balance_known=true
-    elif [[ "$disabled_reason" == "out_of_credits" ]]; then
-        local_available=0
-        extra_balance_known=true
+      ' <<<"$_credits_cached" &>/dev/null; then
+    local_available=$(jq -r '.amount | floor' <<<"$_credits_cached")
+    extra_balance_known=true
+  elif [[ "$disabled_reason" == "out_of_credits" ]]; then
+    local_available=0
+    extra_balance_known=true
+  fi
+  # Only populate display values (and show the section) when there is real
+  # spend data — leaving the dollar placeholders empty for a zero/never-set
+  # extra_usage object, exactly as when this was gated on is_enabled.
+  if ((local_limit > 0 || local_used > 0)); then
+    extra_show="true"
+    # Convert cents to dollars (integer math: 5000 → "50.00")
+    # Use absolute values for formatting to avoid "$-1.-50" with negative remainders
+    _fmt_dollars() {
+      local cents=$1 sign="" abs
+      ((cents < 0)) && sign="-" && cents=$((-cents))
+      abs=$cents
+      printf '%s$%d.%02d' "$sign" $((abs / 100)) $((abs % 100))
+    }
+    extra_limit=$(_fmt_dollars "$local_limit")
+    extra_spent=$(_fmt_dollars "$local_used")
+    if [[ "$extra_balance_known" == "true" ]]; then
+      local_funded=$((local_used + local_available))
+      extra_available=$(_fmt_dollars "$local_available")
+      extra_funded=$(_fmt_dollars "$local_funded")
+      if ((local_funded > 0)); then
+        # Round to the nearest whole percent; QML and Waybar consume
+        # the same normalized value. Clamp hostile/inconsistent data.
+        extra_pct_value=$(((local_used * 100 + local_funded / 2) / local_funded))
+        ((extra_pct_value > 100)) && extra_pct_value=100
+      fi
+      extra_pct=$extra_pct_value
+    else
+      extra_pct=""
     fi
-    # Only populate display values (and show the section) when there is real
-    # spend data — leaving the dollar placeholders empty for a zero/never-set
-    # extra_usage object, exactly as when this was gated on is_enabled.
-    if (( local_limit > 0 || local_used > 0 )); then
-        extra_show="true"
-        # Convert cents to dollars (integer math: 5000 → "50.00")
-        # Use absolute values for formatting to avoid "$-1.-50" with negative remainders
-        _fmt_dollars() {
-            local cents=$1 sign="" abs
-            (( cents < 0 )) && sign="-" && cents=$(( -cents ))
-            abs=$cents
-            printf '%s$%d.%02d' "$sign" $(( abs / 100 )) $(( abs % 100 ))
-        }
-        extra_limit=$(_fmt_dollars "$local_limit")
-        extra_spent=$(_fmt_dollars "$local_used")
-        if [[ "$extra_balance_known" == "true" ]]; then
-            local_funded=$(( local_used + local_available ))
-            extra_available=$(_fmt_dollars "$local_available")
-            extra_funded=$(_fmt_dollars "$local_funded")
-            if (( local_funded > 0 )); then
-                # Round to the nearest whole percent; QML and Waybar consume
-                # the same normalized value. Clamp hostile/inconsistent data.
-                extra_pct_value=$(( (local_used * 100 + local_funded / 2) / local_funded ))
-                (( extra_pct_value > 100 )) && extra_pct_value=100
-            fi
-            extra_pct=$extra_pct_value
-        else
-            extra_pct=""
-        fi
-    fi
+  fi
 fi
 
 # --- Plan label ---
 plan="${sub_type^}"
-if   [[ "$rate_tier" == *"5x"* ]];  then plan+=" 5x"
-elif [[ "$rate_tier" == *"20x"* ]]; then plan+=" 20x"
+if [[ "$rate_tier" == *"5x"* ]]; then
+  plan+=" 5x"
+elif [[ "$rate_tier" == *"20x"* ]]; then
+  plan+=" 20x"
 fi
 
 # --- Pacing ---
 # Output: elapsed icon indicator delta pct_label pts_label
 _s_pace=$(calc_pacing "$session_pct" "$session_reset" "$SESSION_WINDOW")
-read -r session_elapsed session_pace session_pace_indicator session_pace_delta _discard <<< "$_s_pace"
-session_pace_pct=$(cut -d' ' -f5-6 <<< "$_s_pace")
-session_pace_pts=$(cut -d' ' -f7-8 <<< "$_s_pace")
+read -r session_elapsed session_pace session_pace_indicator session_pace_delta _discard <<<"$_s_pace"
+session_pace_pct=$(cut -d' ' -f5-6 <<<"$_s_pace")
+session_pace_pts=$(cut -d' ' -f7-8 <<<"$_s_pace")
 
 _w_pace=$(calc_pacing "$weekly_pct" "$weekly_reset" "$WEEKLY_WINDOW")
-read -r weekly_elapsed weekly_pace weekly_pace_indicator weekly_pace_delta _discard <<< "$_w_pace"
-weekly_pace_pct=$(cut -d' ' -f5-6 <<< "$_w_pace")
-weekly_pace_pts=$(cut -d' ' -f7-8 <<< "$_w_pace")
+read -r weekly_elapsed weekly_pace weekly_pace_indicator weekly_pace_delta _discard <<<"$_w_pace"
+weekly_pace_pct=$(cut -d' ' -f5-6 <<<"$_w_pace")
+weekly_pace_pts=$(cut -d' ' -f7-8 <<<"$_w_pace")
 
 sonnet_elapsed=0 sonnet_pace="" sonnet_pace_indicator="" sonnet_pace_pct="" sonnet_pace_pts="" sonnet_pace_delta="0"
 if [[ "$has_sonnet" == "true" ]]; then
-    _n_pace=$(calc_pacing "$sonnet_pct" "$sonnet_reset" "$WEEKLY_WINDOW")
-    read -r sonnet_elapsed sonnet_pace sonnet_pace_indicator sonnet_pace_delta _discard <<< "$_n_pace"
-    sonnet_pace_pct=$(cut -d' ' -f5-6 <<< "$_n_pace")
-    sonnet_pace_pts=$(cut -d' ' -f7-8 <<< "$_n_pace")
+  _n_pace=$(calc_pacing "$sonnet_pct" "$sonnet_reset" "$WEEKLY_WINDOW")
+  read -r sonnet_elapsed sonnet_pace sonnet_pace_indicator sonnet_pace_delta _discard <<<"$_n_pace"
+  sonnet_pace_pct=$(cut -d' ' -f5-6 <<<"$_n_pace")
+  sonnet_pace_pts=$(cut -d' ' -f7-8 <<<"$_n_pace")
 fi
 
 model_elapsed=0 model_pace="" model_pace_indicator="" model_pace_pct="" model_pace_pts="" model_pace_delta="0"
 if [[ "$has_model" == "true" ]]; then
-    _m_pace=$(calc_pacing "$model_pct" "$model_reset" "$WEEKLY_WINDOW")
-    read -r model_elapsed model_pace model_pace_indicator model_pace_delta _discard <<< "$_m_pace"
-    model_pace_pct=$(cut -d' ' -f5-6 <<< "$_m_pace")
-    model_pace_pts=$(cut -d' ' -f7-8 <<< "$_m_pace")
+  _m_pace=$(calc_pacing "$model_pct" "$model_reset" "$WEEKLY_WINDOW")
+  read -r model_elapsed model_pace model_pace_indicator model_pace_delta _discard <<<"$_m_pace"
+  model_pace_pct=$(cut -d' ' -f5-6 <<<"$_m_pace")
+  model_pace_pts=$(cut -d' ' -f7-8 <<<"$_m_pace")
 fi
 
 # --- Tooltip pace icon (ratio or point-based) ---
 if [[ "$TOOLTIP_PACE_PTS" == "true" ]]; then
-    _tip_session_pace="$session_pace_indicator"
-    _tip_weekly_pace="$weekly_pace_indicator"
-    _tip_sonnet_pace="$sonnet_pace_indicator"
-    _tip_model_pace="$model_pace_indicator"
+  _tip_session_pace="$session_pace_indicator"
+  _tip_weekly_pace="$weekly_pace_indicator"
+  _tip_sonnet_pace="$sonnet_pace_indicator"
+  _tip_model_pace="$model_pace_indicator"
 else
-    _tip_session_pace="$session_pace"
-    _tip_weekly_pace="$weekly_pace"
-    _tip_sonnet_pace="$sonnet_pace"
-    _tip_model_pace="$model_pace"
+  _tip_session_pace="$session_pace"
+  _tip_weekly_pace="$weekly_pace"
+  _tip_sonnet_pace="$sonnet_pace"
+  _tip_model_pace="$model_pace"
 fi
 
 # --- Pace colors ---
 # Sets _sp_<prefix>_{pace,indicator,pct,pts,delta,abs_delta} for apply_format.
 _precompute_pace() {
-    local pfx=$1 pace=$2 indicator=$3 pct=$4 pts=$5 delta=$6
-    if [[ "$FORMAT_PACE_COLOR" == "true" ]]; then
-        local c; c=$(pace_color_for "${delta:-0}")
-        printf -v "_sp_${pfx}_pace"      "<span foreground='%s'>%s</span>" "$c" "$pace"
-        printf -v "_sp_${pfx}_indicator" "<span foreground='%s'>%s</span>" "$c" "$indicator"
-        printf -v "_sp_${pfx}_pct"       "<span foreground='%s'>%s</span>" "$c" "$pct"
-        printf -v "_sp_${pfx}_pts"       "<span foreground='%s'>%s</span>" "$c" "$pts"
-        printf -v "_sp_${pfx}_delta"     "<span foreground='%s'>%s</span>" "$c" "$delta"
-        printf -v "_sp_${pfx}_abs_delta" "<span foreground='%s'>%s</span>" "$c" "${delta#-}"
-    else
-        printf -v "_sp_${pfx}_pace"      '%s' "$pace"
-        printf -v "_sp_${pfx}_indicator" '%s' "$indicator"
-        printf -v "_sp_${pfx}_pct"       '%s' "$pct"
-        printf -v "_sp_${pfx}_pts"       '%s' "$pts"
-        printf -v "_sp_${pfx}_delta"     '%s' "$delta"
-        printf -v "_sp_${pfx}_abs_delta" '%s' "${delta#-}"
-    fi
+  local pfx=$1 pace=$2 indicator=$3 pct=$4 pts=$5 delta=$6
+  if [[ "$FORMAT_PACE_COLOR" == "true" ]]; then
+    local c
+    c=$(pace_color_for "${delta:-0}")
+    printf -v "_sp_${pfx}_pace" "<span foreground='%s'>%s</span>" "$c" "$pace"
+    printf -v "_sp_${pfx}_indicator" "<span foreground='%s'>%s</span>" "$c" "$indicator"
+    printf -v "_sp_${pfx}_pct" "<span foreground='%s'>%s</span>" "$c" "$pct"
+    printf -v "_sp_${pfx}_pts" "<span foreground='%s'>%s</span>" "$c" "$pts"
+    printf -v "_sp_${pfx}_delta" "<span foreground='%s'>%s</span>" "$c" "$delta"
+    printf -v "_sp_${pfx}_abs_delta" "<span foreground='%s'>%s</span>" "$c" "${delta#-}"
+  else
+    printf -v "_sp_${pfx}_pace" '%s' "$pace"
+    printf -v "_sp_${pfx}_indicator" '%s' "$indicator"
+    printf -v "_sp_${pfx}_pct" '%s' "$pct"
+    printf -v "_sp_${pfx}_pts" '%s' "$pts"
+    printf -v "_sp_${pfx}_delta" '%s' "$delta"
+    printf -v "_sp_${pfx}_abs_delta" '%s' "${delta#-}"
+  fi
 }
 _precompute_pace session "$session_pace" "$session_pace_indicator" "$session_pace_pct" "$session_pace_pts" "$session_pace_delta"
-_precompute_pace weekly  "$weekly_pace"  "$weekly_pace_indicator"  "$weekly_pace_pct"  "$weekly_pace_pts"  "$weekly_pace_delta"
-_precompute_pace sonnet  "$sonnet_pace"  "$sonnet_pace_indicator"  "$sonnet_pace_pct"  "$sonnet_pace_pts"  "$sonnet_pace_delta"
-_precompute_pace model   "$model_pace"   "$model_pace_indicator"   "$model_pace_pct"   "$model_pace_pts"   "$model_pace_delta"
+_precompute_pace weekly "$weekly_pace" "$weekly_pace_indicator" "$weekly_pace_pct" "$weekly_pace_pts" "$weekly_pace_delta"
+_precompute_pace sonnet "$sonnet_pace" "$sonnet_pace_indicator" "$sonnet_pace_pct" "$sonnet_pace_pts" "$sonnet_pace_delta"
+_precompute_pace model "$model_pace" "$model_pace_indicator" "$model_pace_pct" "$model_pace_pts" "$model_pace_delta"
 
 # --- Waybar class (granular: low, mid, high, critical) ---
 # Rate limits first; extra usage only matters when a rate limit hits 100%
 max_pct=$session_pct
-(( weekly_pct > max_pct )) && max_pct=$weekly_pct
-(( sonnet_pct > max_pct )) && max_pct=$sonnet_pct
-(( model_max_pct > max_pct )) && max_pct=$model_max_pct
-if (( session_pct >= 100 || weekly_pct >= 100 || sonnet_pct >= 100 || model_max_pct >= 100 )); then
-    (( extra_pct_value > max_pct )) && max_pct=$extra_pct_value
+((weekly_pct > max_pct)) && max_pct=$weekly_pct
+((sonnet_pct > max_pct)) && max_pct=$sonnet_pct
+((model_max_pct > max_pct)) && max_pct=$model_max_pct
+if ((session_pct >= 100 || weekly_pct >= 100 || sonnet_pct >= 100 || model_max_pct >= 100)); then
+  ((extra_pct_value > max_pct)) && max_pct=$extra_pct_value
 fi
 
 class=$(severity_for "$max_pct")
@@ -1800,9 +2057,11 @@ class=$(severity_for "$max_pct")
 # class and the tooltip.
 bar_pct=$session_pct
 if [[ "$FORMAT" != *"{session_pct}"* ]]; then
-    if   [[ "$FORMAT" == *"{weekly_pct}"* ]]; then bar_pct=$weekly_pct
-    elif [[ "$FORMAT" == *"{sonnet_pct}"* ]]; then bar_pct=$sonnet_pct
-    fi
+  if [[ "$FORMAT" == *"{weekly_pct}"* ]]; then
+    bar_pct=$weekly_pct
+  elif [[ "$FORMAT" == *"{sonnet_pct}"* ]]; then
+    bar_pct=$sonnet_pct
+  fi
 fi
 bar_fg=$(color_for "$bar_pct")
 
@@ -1812,41 +2071,43 @@ bar_fg=$(color_for "$bar_pct")
 # state string from severity_for/pace_severity_for. Presentation — colors,
 # bars, countdown text — is entirely the frontend's job, so no Pango here.
 if [[ "$JSON_MODE" == "true" ]]; then
-    # Reverse of the Pango esc applied when model names were extracted
-    # (& was escaped first there, so it is unescaped last here). The quoted
-    # "&" keeps the replacement literal under bash 5.2's patsub_replacement,
-    # where an unquoted & would expand to the match itself.
-    unescape_pango() {
-        local s="$1"
-        s="${s//&lt;/<}"; s="${s//&gt;/>}"; s="${s//&amp;/"&"}"
-        printf '%s' "$s"
-    }
+  # Reverse of the Pango esc applied when model names were extracted
+  # (& was escaped first there, so it is unescaped last here). The quoted
+  # "&" keeps the replacement literal under bash 5.2's patsub_replacement,
+  # where an unquoted & would expand to the match itself.
+  unescape_pango() {
+    local s="$1"
+    s="${s//&lt;/<}"
+    s="${s//&gt;/>}"
+    s="${s//&amp;/"&"}"
+    printf '%s' "$s"
+  }
 
-    # One usage window as a JSON object — the same shape codexbar publishes,
-    # field for field, so a script that reads one reads the other.
-    # Args: id label group window_seconds used_pct resets_at elapsed_pct
-    #       pace_icon pace_indicator pace_delta pace_ratio_label pace_pts_label
-    json_window() {
-        local id=$1 label=$2 group=$3 window_s=$4 pct=$5 reset=$6 elapsed=$7
-        local icon=$8 indicator=$9 delta=${10:-0} pctl=${11} ptsl=${12}
-        # The API's own spelling is "+00:00"; codexbar publishes "Z". One form,
-        # so a consumer parsing both does not need two branches.
-        local reset_unix="" reset_iso=""
-        if [[ -n "$reset" ]]; then
-            reset_unix=$(date -d "$reset" +%s 2>/dev/null) || reset_unix=""
-            [[ -n "$reset_unix" ]] && reset_iso=$(date -u -d "@$reset_unix" +%Y-%m-%dT%H:%M:%SZ)
-        fi
-        jq -nc \
-            --arg id "$id" --arg label "$label" --arg group "$group" \
-            --argjson window_s "$window_s" \
-            --argjson pct "$pct" --arg reset "$reset_iso" \
-            --arg reset_unix "$reset_unix" --argjson elapsed "$elapsed" \
-            --arg icon "$icon" --arg indicator "$indicator" --argjson delta "$delta" \
-            --arg pctl "$pctl" --arg ptsl "$ptsl" \
-            --argjson rem "$(remaining_pct_for "$pct")" \
-            --arg state "$(severity_for "$pct")" \
-            --arg pstate "$(pace_severity_for "$delta")" \
-            '{id:$id, label:$label,
+  # One usage window as a JSON object — the same shape codexbar publishes,
+  # field for field, so a script that reads one reads the other.
+  # Args: id label group window_seconds used_pct resets_at elapsed_pct
+  #       pace_icon pace_indicator pace_delta pace_ratio_label pace_pts_label
+  json_window() {
+    local id=$1 label=$2 group=$3 window_s=$4 pct=$5 reset=$6 elapsed=$7
+    local icon=$8 indicator=$9 delta=${10:-0} pctl=${11} ptsl=${12}
+    # The API's own spelling is "+00:00"; codexbar publishes "Z". One form,
+    # so a consumer parsing both does not need two branches.
+    local reset_unix="" reset_iso=""
+    if [[ -n "$reset" ]]; then
+      reset_unix=$(date -d "$reset" +%s 2>/dev/null) || reset_unix=""
+      [[ -n "$reset_unix" ]] && reset_iso=$(date -u -d "@$reset_unix" +%Y-%m-%dT%H:%M:%SZ)
+    fi
+    jq -nc \
+      --arg id "$id" --arg label "$label" --arg group "$group" \
+      --argjson window_s "$window_s" \
+      --argjson pct "$pct" --arg reset "$reset_iso" \
+      --arg reset_unix "$reset_unix" --argjson elapsed "$elapsed" \
+      --arg icon "$icon" --arg indicator "$indicator" --argjson delta "$delta" \
+      --arg pctl "$pctl" --arg ptsl "$ptsl" \
+      --argjson rem "$(remaining_pct_for "$pct")" \
+      --arg state "$(severity_for "$pct")" \
+      --arg pstate "$(pace_severity_for "$delta")" \
+      '{id:$id, label:$label,
               group:(if $group == "" then null else $group end),
               used_pct:$pct, remaining_pct:$rem,
               reset_at:(if $reset == "" then null else $reset end),
@@ -1856,133 +2117,138 @@ if [[ "$JSON_MODE" == "true" ]]; then
                     icon:$icon, indicator:$indicator,
                     ratio_label:$pctl, points_label:$ptsl},
               state:$state}'
-    }
+  }
 
-    # One flat list of usage windows, in the order the panel and the tooltip
-    # show them. An array rather than named keys because the model-scoped
-    # limits were always a list anyway, and because it is the shape codexbar
-    # publishes — one schema for the family beats two that describe the same
-    # thing. `group` names the meter a window belongs to (a model), `label`
-    # names the window inside it.
-    _win_objs=()
-    _win_objs+=("$(json_window session Session "" "$SESSION_WINDOW" \
-        "$session_pct" "$session_reset" "$session_elapsed" \
-        "$session_pace" "$session_pace_indicator" "$session_pace_delta" \
-        "$session_pace_pct" "$session_pace_pts")")
-    _win_objs+=("$(json_window weekly Weekly "" "$WEEKLY_WINDOW" \
-        "$weekly_pct" "$weekly_reset" "$weekly_elapsed" \
-        "$weekly_pace" "$weekly_pace_indicator" "$weekly_pace_delta" \
-        "$weekly_pace_pct" "$weekly_pace_pts")")
-    if [[ "$has_sonnet" == "true" ]]; then
-        _win_objs+=("$(json_window sonnet Weekly Sonnet "$WEEKLY_WINDOW" \
-            "$sonnet_pct" "$sonnet_reset" "$sonnet_elapsed" \
-            "$sonnet_pace" "$sonnet_pace_indicator" "$sonnet_pace_delta" \
-            "$sonnet_pace_pct" "$sonnet_pace_pts")")
+  # One flat list of usage windows, in the order the panel and the tooltip
+  # show them. An array rather than named keys because the model-scoped
+  # limits were always a list anyway, and because it is the shape codexbar
+  # publishes — one schema for the family beats two that describe the same
+  # thing. `group` names the meter a window belongs to (a model), `label`
+  # names the window inside it.
+  _win_objs=()
+  _win_objs+=("$(json_window session Session "" "$SESSION_WINDOW" \
+    "$session_pct" "$session_reset" "$session_elapsed" \
+    "$session_pace" "$session_pace_indicator" "$session_pace_delta" \
+    "$session_pace_pct" "$session_pace_pts")")
+  _win_objs+=("$(json_window weekly Weekly "" "$WEEKLY_WINDOW" \
+    "$weekly_pct" "$weekly_reset" "$weekly_elapsed" \
+    "$weekly_pace" "$weekly_pace_indicator" "$weekly_pace_delta" \
+    "$weekly_pace_pct" "$weekly_pace_pts")")
+  if [[ "$has_sonnet" == "true" ]]; then
+    _win_objs+=("$(json_window sonnet Weekly Sonnet "$WEEKLY_WINDOW" \
+      "$sonnet_pct" "$sonnet_reset" "$sonnet_elapsed" \
+      "$sonnet_pace" "$sonnet_pace_indicator" "$sonnet_pace_delta" \
+      "$sonnet_pace_pct" "$sonnet_pace_pts")")
+  fi
+  # Index 0 reuses the pacing already computed for the {model_*}
+  # placeholders; later entries compute inline — same split the tooltip
+  # renderer uses.
+  for _mi in "${!model_pcts[@]}"; do
+    _mp="${model_pcts[$_mi]}"
+    if ((_mi == 0)); then
+      _me=$model_elapsed _mic=$model_pace _min=$model_pace_indicator
+      _md=$model_pace_delta _mpl=$model_pace_pct _mtl=$model_pace_pts
+    else
+      _mo=$(calc_pacing "$_mp" "${model_resets[$_mi]}" "$WEEKLY_WINDOW")
+      read -r _me _mic _min _md _discard <<<"$_mo"
+      _mpl=$(cut -d' ' -f5-6 <<<"$_mo")
+      _mtl=$(cut -d' ' -f7-8 <<<"$_mo")
     fi
-    # Index 0 reuses the pacing already computed for the {model_*}
-    # placeholders; later entries compute inline — same split the tooltip
-    # renderer uses.
-    for _mi in "${!model_pcts[@]}"; do
-        _mp="${model_pcts[$_mi]}"
-        if (( _mi == 0 )); then
-            _me=$model_elapsed _mic=$model_pace _min=$model_pace_indicator
-            _md=$model_pace_delta _mpl=$model_pace_pct _mtl=$model_pace_pts
-        else
-            _mo=$(calc_pacing "$_mp" "${model_resets[$_mi]}" "$WEEKLY_WINDOW")
-            read -r _me _mic _min _md _discard <<< "$_mo"
-            _mpl=$(cut -d' ' -f5-6 <<< "$_mo")
-            _mtl=$(cut -d' ' -f7-8 <<< "$_mo")
-        fi
-        _win_objs+=("$(json_window "model_${_mi}" Weekly \
-            "$(unescape_pango "${model_names_esc[$_mi]}")" "$WEEKLY_WINDOW" \
-            "$_mp" "${model_resets[$_mi]}" "$_me" "$_mic" "$_min" "$_md" "$_mpl" "$_mtl")")
-    done
-    _json_windows=$(printf '%s\n' "${_win_objs[@]}" | jq -cs '.')
+    _win_objs+=("$(json_window "model_${_mi}" Weekly \
+      "$(unescape_pango "${model_names_esc[$_mi]}")" "$WEEKLY_WINDOW" \
+      "$_mp" "${model_resets[$_mi]}" "$_me" "$_mic" "$_min" "$_md" "$_mpl" "$_mtl")")
+  done
+  _json_windows=$(printf '%s\n' "${_win_objs[@]}" | jq -cs '.')
 
-    _json_extra="null"
-    if [[ "$extra_show" == "true" ]]; then
-        _json_available=null _json_funded=null _json_extra_pct=null
-        if [[ "$extra_balance_known" == "true" ]]; then
-            _json_available=$local_available
-            _json_funded=$local_funded
-            _json_extra_pct=$extra_pct_value
-        fi
-        # The amounts go to jq on STDIN, never as `--argjson`: an argument sits
-        # in jq's /proc/<pid>/cmdline, which every local user can read, and
-        # spend and prepaid balance are the account's private billing data.
-        # Every value is already a JSON literal (an integer from `floor`, null,
-        # true/false, or a GAUGE_STATES word), so printf only joins them.
-        _json_extra=$(printf '{"used":%s,"limit":%s,"available":%s,"funded":%s,"known":%s,"pct":%s,"state":"%s"}' \
-            "$local_used" "$local_limit" "$_json_available" "$_json_funded" \
-            "$extra_balance_known" "$_json_extra_pct" "$(severity_for "$extra_pct_value")" |
-            jq -c '{used_credit_cents:.used, available_credit_cents:.available,
+  _json_extra="null"
+  if [[ "$extra_show" == "true" ]]; then
+    _json_available=null _json_funded=null _json_extra_pct=null
+    if [[ "$extra_balance_known" == "true" ]]; then
+      _json_available=$local_available
+      _json_funded=$local_funded
+      _json_extra_pct=$extra_pct_value
+    fi
+    # The amounts go to jq on STDIN, never as `--argjson`: an argument sits
+    # in jq's /proc/<pid>/cmdline, which every local user can read, and
+    # spend and prepaid balance are the account's private billing data.
+    # Every value is already a JSON literal (an integer from `floor`, null,
+    # true/false, or a GAUGE_STATES word), so printf only joins them.
+    _json_extra=$(printf '{"used":%s,"limit":%s,"available":%s,"funded":%s,"known":%s,"pct":%s,"state":"%s"}' \
+      "$local_used" "$local_limit" "$_json_available" "$_json_funded" \
+      "$extra_balance_known" "$_json_extra_pct" "$(severity_for "$extra_pct_value")" |
+      jq -c '{used_credit_cents:.used, available_credit_cents:.available,
                     funded_credit_cents:.funded, monthly_limit_cents:.limit,
                     balance_known:.known, used_pct:.pct, state:.state}')
-    fi
+  fi
 
-    _json_updated=""
-    _json_age=null
-    if [[ -f "$cache_file" ]]; then
-        _jcts=$(date -r "$cache_file" +%s)
-        _json_updated=$(date -u -d "@${_jcts}" +%Y-%m-%dT%H:%M:%SZ)
-        _json_age=$(( $(date +%s) - _jcts ))
-        # Future mtime (clock skew) must not leak a negative age.
-        (( _json_age < 0 )) && _json_age=0
-    fi
-    _json_stale=false
-    _json_stale_reason=""
-    if [[ "${transient_stale:-false}" == "true" ]]; then
-        _json_stale=true; _json_stale_reason="network"
-    elif [[ -f "$stale_marker" ]]; then
-        _json_stale=true; _json_stale_reason="error"
-    fi
-    # `error` is reserved for a hard failure (no document at all); an API error
-    # sitting BEHIND usable cached data is `last_error`, which is a different
-    # thing and must not make a consumer think the payload is empty.
-    _json_last_error=null
-    if [[ -f "$CACHE_DIR/.last_error" ]]; then
-        _le_code="" _le_msg=""
-        # Bounded, and through a process substitution: a FIFO here would park
-        # `read` for ever, and the redirect form gives it the file directly.
-        { read -r _le_code || true; read -r _le_msg || true; } \
-            < <(read_bounded "$CACHE_DIR/.last_error" "$MAX_STATE_BYTES" 2>/dev/null) || true
-        if [[ -n "$_le_code" && "$_le_code" =~ ^[0-9]+$ && "$_le_code" != "000" ]]; then
-            # The message is the server's own free text, so it may name an
-            # amount: stdin (b64_lines), like the Waybar tooltip that shows it.
-            _json_last_error=$(b64_lines "$_le_msg" | jq -nRc --argjson c "$_le_code" \
-                'input | @base64d as $m
+  _json_updated=""
+  _json_age=null
+  if [[ -f "$cache_file" ]]; then
+    _jcts=$(date -r "$cache_file" +%s)
+    _json_updated=$(date -u -d "@${_jcts}" +%Y-%m-%dT%H:%M:%SZ)
+    _json_age=$(($(date +%s) - _jcts))
+    # Future mtime (clock skew) must not leak a negative age.
+    ((_json_age < 0)) && _json_age=0
+  fi
+  _json_stale=false
+  _json_stale_reason=""
+  if [[ "${transient_stale:-false}" == "true" ]]; then
+    _json_stale=true
+    _json_stale_reason="network"
+  elif [[ -f "$stale_marker" ]]; then
+    _json_stale=true
+    _json_stale_reason="error"
+  fi
+  # `error` is reserved for a hard failure (no document at all); an API error
+  # sitting BEHIND usable cached data is `last_error`, which is a different
+  # thing and must not make a consumer think the payload is empty.
+  _json_last_error=null
+  if [[ -f "$CACHE_DIR/.last_error" ]]; then
+    _le_code="" _le_msg=""
+    # Bounded, and through a process substitution: a FIFO here would park
+    # `read` for ever, and the redirect form gives it the file directly.
+    {
+      read -r _le_code || true
+      read -r _le_msg || true
+    } \
+      < <(read_bounded "$CACHE_DIR/.last_error" "$MAX_STATE_BYTES" 2>/dev/null) || true
+    if [[ -n "$_le_code" && "$_le_code" =~ ^[0-9]+$ && "$_le_code" != "000" ]]; then
+      # The message is the server's own free text, so it may name an
+      # amount: stdin (b64_lines), like the Waybar tooltip that shows it.
+      _json_last_error=$(b64_lines "$_le_msg" | jq -nRc --argjson c "$_le_code" \
+        'input | @base64d as $m
                  | {http_status:$c, message:(if $m == "" then ("HTTP " + ($c|tostring)) else $m end)}')
-        fi
     fi
+  fi
 
-    # The ramp itself, colors and the percentages they sit at, so a frontend
-    # interpolates the same gauge instead of hardcoding these thresholds again.
-    _gauge_rows=""
-    for _gi in "${!GAUGE_PCTS[@]}"; do
-        _gauge_rows+="${GAUGE_PCTS[$_gi]} ${GAUGE_COLORS[$_gi]}"$'\n'
-    done
-    # A closing stop at 100: without it a consumer interpolating between stops
-    # has nothing above the critical anchor and has to invent the top of the
-    # ramp. Same five stops codexbar publishes.
-    _gauge_rows+="100 ${GAUGE_COLORS[-1]}"$'\n'
-    _json_stops=$(printf '%s' "$_gauge_rows" | jq -R -s '
+  # The ramp itself, colors and the percentages they sit at, so a frontend
+  # interpolates the same gauge instead of hardcoding these thresholds again.
+  _gauge_rows=""
+  for _gi in "${!GAUGE_PCTS[@]}"; do
+    _gauge_rows+="${GAUGE_PCTS[$_gi]} ${GAUGE_COLORS[$_gi]}"$'\n'
+  done
+  # A closing stop at 100: without it a consumer interpolating between stops
+  # has nothing above the critical anchor and has to invent the top of the
+  # ramp. Same five stops codexbar publishes.
+  _gauge_rows+="100 ${GAUGE_COLORS[-1]}"$'\n'
+  _json_stops=$(printf '%s' "$_gauge_rows" | jq -R -s '
         split("\n") | map(select(length > 0) | split(" ")
                           | {pct: (.[0] | tonumber), color: .[1]})')
 
-    # extra_usage carries the billing amounts and last_error the server's free
-    # text, so both travel on stdin like above, not in argv. max_pct goes with
-    # them: it is the one other field that can be read off the extra-usage
-    # percent. All three are already JSON.
-    printf '{"extra":%s,"max_pct":%s,"last_error":%s}' "$_json_extra" "$max_pct" "$_json_last_error" |
+  # extra_usage carries the billing amounts and last_error the server's free
+  # text, so both travel on stdin like above, not in argv. max_pct goes with
+  # them: it is the one other field that can be read off the extra-usage
+  # percent. All three are already JSON.
+  printf '{"extra":%s,"max_pct":%s,"last_error":%s}' "$_json_extra" "$max_pct" "$_json_last_error" |
     jq -c \
-        --arg plan "$plan" --arg state "$class" \
-        --arg pal_low "$BAR_COLOR_LOW" --arg pal_mid "$BAR_COLOR_MID" \
-        --arg pal_high "$BAR_COLOR_HIGH" --arg pal_critical "$BAR_COLOR_CRITICAL" \
-        --argjson pal_stops "$_json_stops" \
-        --argjson windows "$_json_windows" \
-        --arg updated "$_json_updated" --argjson age "$_json_age" \
-        --argjson stale "$_json_stale" --arg stale_reason "$_json_stale_reason" \
-        '{schema_version:2, error:null, loading:false,
+      --arg plan "$plan" --arg state "$class" \
+      --arg pal_low "$BAR_COLOR_LOW" --arg pal_mid "$BAR_COLOR_MID" \
+      --arg pal_high "$BAR_COLOR_HIGH" --arg pal_critical "$BAR_COLOR_CRITICAL" \
+      --argjson pal_stops "$_json_stops" \
+      --argjson windows "$_json_windows" \
+      --arg updated "$_json_updated" --argjson age "$_json_age" \
+      --argjson stale "$_json_stale" --arg stale_reason "$_json_stale_reason" \
+      '{schema_version:2, error:null, loading:false,
           plan:$plan, state:$state, max_pct:.max_pct,
           windows:$windows, extra_usage:.extra,
           palette:{low:$pal_low, mid:$pal_mid, high:$pal_high, critical:$pal_critical,
@@ -1992,7 +2258,7 @@ if [[ "$JSON_MODE" == "true" ]]; then
           updated_at:(if $updated == "" then null else $updated end),
           data_age_seconds:$age,
           last_error:.last_error}'
-    exit 0
+  exit 0
 fi
 
 # --- Escape API-supplied strings for Pango ---
@@ -2007,68 +2273,68 @@ plan=$(pango_escape "$plan")
 # When --format-pace-color is set, pace placeholders are individually colored
 # per window based on pacing delta. Otherwise they inherit the bar color.
 apply_format() {
-    local text="$1"
-    text="${text//\{icon\}/󰚩}"
-    text="${text//\{plan\}/$plan}"
-    text="${text//\{session_pct\}/$session_pct}"
-    text="${text//\{session_reset\}/$s_cd_val}"
-    text="${text//\{session_elapsed\}/$session_elapsed}"
-    text="${text//\{weekly_pct\}/$weekly_pct}"
-    text="${text//\{weekly_reset\}/$w_cd_val}"
-    text="${text//\{weekly_elapsed\}/$weekly_elapsed}"
-    text="${text//\{sonnet_pct\}/$sonnet_pct}"
-    text="${text//\{session_remaining_pct\}/$session_remaining_pct}"
-    text="${text//\{weekly_remaining_pct\}/$weekly_remaining_pct}"
-    text="${text//\{sonnet_remaining_pct\}/$sonnet_remaining_pct}"
-    text="${text//\{sonnet_reset\}/$sn_cd_val}"
-    text="${text//\{sonnet_elapsed\}/$sonnet_elapsed}"
-    # Quoted replacement: & in the escaped name must stay literal under
-    # bash 5.2's patsub_replacement (unquoted & expands to the match).
-    text="${text//\{model_name\}/"$model_name_esc"}"
-    text="${text//\{model_pct\}/$model_pct}"
-    text="${text//\{model_reset\}/$m_cd_val}"
-    text="${text//\{model_elapsed\}/$model_elapsed}"
-    text="${text//\{model_remaining_pct\}/$model_remaining_pct}"
-    text="${text//\{extra_spent\}/$extra_spent}"
-    text="${text//\{extra_limit\}/$extra_limit}"
-    text="${text//\{extra_pct\}/$extra_pct}"
-    text="${text//\{session_bar\}/$format_session_bar}"
-    text="${text//\{weekly_bar\}/$format_weekly_bar}"
-    text="${text//\{sonnet_bar\}/$format_sonnet_bar}"
-    text="${text//\{model_bar\}/$format_model_bar}"
-    text="${text//\{extra_bar\}/$format_extra_bar}"
-    text="${text//\{session_remaining_bar\}/$format_session_remaining_bar}"
-    text="${text//\{weekly_remaining_bar\}/$format_weekly_remaining_bar}"
-    text="${text//\{sonnet_remaining_bar\}/$format_sonnet_remaining_bar}"
-    text="${text//\{model_remaining_bar\}/$format_model_remaining_bar}"
+  local text="$1"
+  text="${text//\{icon\}/󰚩}"
+  text="${text//\{plan\}/$plan}"
+  text="${text//\{session_pct\}/$session_pct}"
+  text="${text//\{session_reset\}/$s_cd_val}"
+  text="${text//\{session_elapsed\}/$session_elapsed}"
+  text="${text//\{weekly_pct\}/$weekly_pct}"
+  text="${text//\{weekly_reset\}/$w_cd_val}"
+  text="${text//\{weekly_elapsed\}/$weekly_elapsed}"
+  text="${text//\{sonnet_pct\}/$sonnet_pct}"
+  text="${text//\{session_remaining_pct\}/$session_remaining_pct}"
+  text="${text//\{weekly_remaining_pct\}/$weekly_remaining_pct}"
+  text="${text//\{sonnet_remaining_pct\}/$sonnet_remaining_pct}"
+  text="${text//\{sonnet_reset\}/$sn_cd_val}"
+  text="${text//\{sonnet_elapsed\}/$sonnet_elapsed}"
+  # Quoted replacement: & in the escaped name must stay literal under
+  # bash 5.2's patsub_replacement (unquoted & expands to the match).
+  text="${text//\{model_name\}/"$model_name_esc"}"
+  text="${text//\{model_pct\}/$model_pct}"
+  text="${text//\{model_reset\}/$m_cd_val}"
+  text="${text//\{model_elapsed\}/$model_elapsed}"
+  text="${text//\{model_remaining_pct\}/$model_remaining_pct}"
+  text="${text//\{extra_spent\}/$extra_spent}"
+  text="${text//\{extra_limit\}/$extra_limit}"
+  text="${text//\{extra_pct\}/$extra_pct}"
+  text="${text//\{session_bar\}/$format_session_bar}"
+  text="${text//\{weekly_bar\}/$format_weekly_bar}"
+  text="${text//\{sonnet_bar\}/$format_sonnet_bar}"
+  text="${text//\{model_bar\}/$format_model_bar}"
+  text="${text//\{extra_bar\}/$format_extra_bar}"
+  text="${text//\{session_remaining_bar\}/$format_session_remaining_bar}"
+  text="${text//\{weekly_remaining_bar\}/$format_weekly_remaining_bar}"
+  text="${text//\{sonnet_remaining_bar\}/$format_sonnet_remaining_bar}"
+  text="${text//\{model_remaining_bar\}/$format_model_remaining_bar}"
 
-    # Pace placeholders — pre-computed colored or plain depending on --format-pace-color.
-    text="${text//\{session_pace_indicator\}/$_sp_session_indicator}"
-    text="${text//\{session_pace_abs_delta\}/$_sp_session_abs_delta}"
-    text="${text//\{session_pace_delta\}/$_sp_session_delta}"
-    text="${text//\{session_pace_pct\}/$_sp_session_pct}"
-    text="${text//\{session_pace_pts\}/$_sp_session_pts}"
-    text="${text//\{session_pace\}/$_sp_session_pace}"
-    text="${text//\{weekly_pace_indicator\}/$_sp_weekly_indicator}"
-    text="${text//\{weekly_pace_abs_delta\}/$_sp_weekly_abs_delta}"
-    text="${text//\{weekly_pace_delta\}/$_sp_weekly_delta}"
-    text="${text//\{weekly_pace_pct\}/$_sp_weekly_pct}"
-    text="${text//\{weekly_pace_pts\}/$_sp_weekly_pts}"
-    text="${text//\{weekly_pace\}/$_sp_weekly_pace}"
-    text="${text//\{sonnet_pace_indicator\}/$_sp_sonnet_indicator}"
-    text="${text//\{sonnet_pace_abs_delta\}/$_sp_sonnet_abs_delta}"
-    text="${text//\{sonnet_pace_delta\}/$_sp_sonnet_delta}"
-    text="${text//\{sonnet_pace_pct\}/$_sp_sonnet_pct}"
-    text="${text//\{sonnet_pace_pts\}/$_sp_sonnet_pts}"
-    text="${text//\{sonnet_pace\}/$_sp_sonnet_pace}"
-    text="${text//\{model_pace_indicator\}/$_sp_model_indicator}"
-    text="${text//\{model_pace_abs_delta\}/$_sp_model_abs_delta}"
-    text="${text//\{model_pace_delta\}/$_sp_model_delta}"
-    text="${text//\{model_pace_pct\}/$_sp_model_pct}"
-    text="${text//\{model_pace_pts\}/$_sp_model_pts}"
-    text="${text//\{model_pace\}/$_sp_model_pace}"
+  # Pace placeholders — pre-computed colored or plain depending on --format-pace-color.
+  text="${text//\{session_pace_indicator\}/$_sp_session_indicator}"
+  text="${text//\{session_pace_abs_delta\}/$_sp_session_abs_delta}"
+  text="${text//\{session_pace_delta\}/$_sp_session_delta}"
+  text="${text//\{session_pace_pct\}/$_sp_session_pct}"
+  text="${text//\{session_pace_pts\}/$_sp_session_pts}"
+  text="${text//\{session_pace\}/$_sp_session_pace}"
+  text="${text//\{weekly_pace_indicator\}/$_sp_weekly_indicator}"
+  text="${text//\{weekly_pace_abs_delta\}/$_sp_weekly_abs_delta}"
+  text="${text//\{weekly_pace_delta\}/$_sp_weekly_delta}"
+  text="${text//\{weekly_pace_pct\}/$_sp_weekly_pct}"
+  text="${text//\{weekly_pace_pts\}/$_sp_weekly_pts}"
+  text="${text//\{weekly_pace\}/$_sp_weekly_pace}"
+  text="${text//\{sonnet_pace_indicator\}/$_sp_sonnet_indicator}"
+  text="${text//\{sonnet_pace_abs_delta\}/$_sp_sonnet_abs_delta}"
+  text="${text//\{sonnet_pace_delta\}/$_sp_sonnet_delta}"
+  text="${text//\{sonnet_pace_pct\}/$_sp_sonnet_pct}"
+  text="${text//\{sonnet_pace_pts\}/$_sp_sonnet_pts}"
+  text="${text//\{sonnet_pace\}/$_sp_sonnet_pace}"
+  text="${text//\{model_pace_indicator\}/$_sp_model_indicator}"
+  text="${text//\{model_pace_abs_delta\}/$_sp_model_abs_delta}"
+  text="${text//\{model_pace_delta\}/$_sp_model_delta}"
+  text="${text//\{model_pace_pct\}/$_sp_model_pct}"
+  text="${text//\{model_pace_pts\}/$_sp_model_pts}"
+  text="${text//\{model_pace\}/$_sp_model_pace}"
 
-    printf '%s' "$text"
+  printf '%s' "$text"
 }
 
 # Compute countdowns once
@@ -2102,22 +2368,22 @@ format_model_remaining_bar=$(make_bar "$model_remaining_pct" "$model_color")
 
 # Stale data indicator
 stale_icon=""
-[[ -f "$stale_marker" || "${transient_stale:-false}" == "true" ]] && stale_icon=" "   # nf-fa-pause (U+23F8 renders as a color emoji)
+[[ -f "$stale_marker" || "${transient_stale:-false}" == "true" ]] && stale_icon=" " # nf-fa-pause (U+23F8 renders as a color emoji)
 
 bar_text=$(apply_format "$FORMAT")${stale_icon}
 
 # --- Colorize bar text via Pango ---
 if [[ "$BAR_PLAIN" == "true" ]]; then
-    # Monochrome bar: no wrapper, and any color a placeholder brought with it
-    # (progress bars, per-window pace colors) is stripped. The class field is
-    # untouched, so CSS remains the way to style this.
-    bar_text="${BAR_ICON:+${BAR_ICON} }${bar_text}"
-    bar_text=$(printf '%s' "$bar_text" | decolor)
+  # Monochrome bar: no wrapper, and any color a placeholder brought with it
+  # (progress bars, per-window pace colors) is stripped. The class field is
+  # untouched, so CSS remains the way to style this.
+  bar_text="${BAR_ICON:+${BAR_ICON} }${bar_text}"
+  bar_text=$(printf '%s' "$bar_text" | decolor)
 elif [[ "$FORMAT_PACE_COLOR" == "true" && "$FORMAT" == *_pace* ]]; then
-    # Neutral base; pace placeholders provide their own color
-    bar_text="<span foreground='${FG}'>${BAR_ICON:+${BAR_ICON} }${bar_text}</span>"
+  # Neutral base; pace placeholders provide their own color
+  bar_text="<span foreground='${FG}'>${BAR_ICON:+${BAR_ICON} }${bar_text}</span>"
 else
-    bar_text="<span foreground='${bar_fg}'>${BAR_ICON:+${BAR_ICON} }${bar_text}</span>"
+  bar_text="<span foreground='${bar_fg}'>${BAR_ICON:+${BAR_ICON} }${bar_text}</span>"
 fi
 
 # --- Stale status note ---
@@ -2127,8 +2393,8 @@ fi
 _updated="—"
 _data_age=""
 if [[ -f "$cache_file" ]]; then
-    _updated=$(date -r "$cache_file" +%H:%M)
-    _data_age=$(rel_age $(( $(date +%s) - $(date -r "$cache_file" +%s) )))
+  _updated=$(date -r "$cache_file" +%H:%M)
+  _data_age=$(rel_age $(($(date +%s) - $(date -r "$cache_file" +%s))))
 fi
 _stale_note=""
 # Suffix for the freshness footer. The footer always says when the data is
@@ -2136,276 +2402,287 @@ _stale_note=""
 # panel uses.
 _stale_suffix=""
 if [[ "${transient_stale:-false}" == "true" ]]; then
-    _stale_note="  Waiting for network — data from ${_updated}${_data_age:+ (${_data_age})}"
-    _stale_suffix="<span foreground='${ORANGE}'> · stale (waiting for network)</span>"
+  _stale_note="  Waiting for network — data from ${_updated}${_data_age:+ (${_data_age})}"
+  _stale_suffix="<span foreground='${ORANGE}'> · stale (waiting for network)</span>"
 elif [[ -f "$stale_marker" ]]; then
-    _stale_note="  Stale — data from ${_updated}${_data_age:+ (${_data_age})}"
-    _stale_suffix="<span foreground='${ORANGE}'> · stale (API errors)</span>"
+  _stale_note="  Stale — data from ${_updated}${_data_age:+ (${_data_age})}"
+  _stale_suffix="<span foreground='${ORANGE}'> · stale (API errors)</span>"
 fi
 
 # --- Tooltip ---
 if [[ -n "$TOOLTIP_FORMAT" ]]; then
-    # Custom tooltip via --tooltip-format
-    t=$(apply_format "$TOOLTIP_FORMAT")
-    [[ -n "$_stale_note" ]] && t+=$'\n'"<span foreground='${ORANGE}'>${_stale_note}</span>"
+  # Custom tooltip via --tooltip-format
+  t=$(apply_format "$TOOLTIP_FORMAT")
+  [[ -n "$_stale_note" ]] && t+=$'\n'"<span foreground='${ORANGE}'>${_stale_note}</span>"
 else
-    # Default rich Pango tooltip. The meters are parked and resolved after
-    # the width pass — refer to add_meter below.
-    s_cd="$s_cd_val"
-    w_cd="$w_cd_val"
+  # Default rich Pango tooltip. The meters are parked and resolved after
+  # the width pass — refer to add_meter below.
+  s_cd="$s_cd_val"
+  w_cd="$w_cd_val"
 
-    NL=$'\n'
-    B="<span foreground='${BLUE}'>"
-    E="</span>"
+  NL=$'\n'
+  B="<span foreground='${BLUE}'>"
+  E="</span>"
 
-    strip_tags() { sed 's/<[^>]*>//g' <<< "$1"; }
+  strip_tags() { sed 's/<[^>]*>//g' <<<"$1"; }
 
-    # --- The meter row spans the tooltip ---------------------------------
-    # A meter row is <indent><bar><gap><value>, and the value is right-aligned
-    # on the tooltip's inner width — the same column the longest text line
-    # ends on. The bar length therefore depends on the WIDEST line, which is
-    # not known while the lines are still being collected. So a meter parks a
-    # placeholder in `lines` plus one entry in the parallel arrays below, and
-    # the resolution happens after the width pass.
-    #
-    # Parallel arrays, not one packed token: the value labels and colors are
-    # markup-adjacent, and splitting a packed record back apart in bash is one
-    # quoting bug waiting to happen.
-    TIP_IND=3           # spaces before the bar
-    TIP_VAL=6           # value column, wide enough for "100% ↑"
-    TIP_GAP_MIN=2       # smallest gap between the bar and the value
-    TIP_BAR_MIN=20      # a short tooltip still gets a readable bar
-    TIP_BAR_MAX=48      # one long line must not stretch the bar into a ruler
-    meter_pct=() meter_elapsed=() meter_mode=() meter_color=() meter_label=()
-    add_meter() {  # add_meter <pct> <elapsed> <mode> <value_color> <value_label>
-        # mode: "tip"  -> display_bar (respects --remaining and the pace marker)
-        #       "flat" -> make_bar with the usage gradient and no marker
-        # An empty <value_label> draws the bar with no value column, for a
-        # meter whose number already sits on the header row above it. It keeps
-        # the family bar length: a shorter bar would read as another scale.
-        meter_pct+=("$1"); meter_elapsed+=("$2"); meter_mode+=("$3")
-        meter_color+=("$4"); meter_label+=("$5")
-        lines+=("METER:$(( ${#meter_pct[@]} - 1 ))")
-    }
+  # --- The meter row spans the tooltip ---------------------------------
+  # A meter row is <indent><bar><gap><value>, and the value is right-aligned
+  # on the tooltip's inner width — the same column the longest text line
+  # ends on. The bar length therefore depends on the WIDEST line, which is
+  # not known while the lines are still being collected. So a meter parks a
+  # placeholder in `lines` plus one entry in the parallel arrays below, and
+  # the resolution happens after the width pass.
+  #
+  # Parallel arrays, not one packed token: the value labels and colors are
+  # markup-adjacent, and splitting a packed record back apart in bash is one
+  # quoting bug waiting to happen.
+  TIP_IND=3      # spaces before the bar
+  TIP_VAL=6      # value column, wide enough for "100% ↑"
+  TIP_GAP_MIN=2  # smallest gap between the bar and the value
+  TIP_BAR_MIN=20 # a short tooltip still gets a readable bar
+  TIP_BAR_MAX=48 # one long line must not stretch the bar into a ruler
+  meter_pct=() meter_elapsed=() meter_mode=() meter_color=() meter_label=()
+  add_meter() { # add_meter <pct> <elapsed> <mode> <value_color> <value_label>
+    # mode: "tip"  -> display_bar (respects --remaining and the pace marker)
+    #       "flat" -> make_bar with the usage gradient and no marker
+    # An empty <value_label> draws the bar with no value column, for a
+    # meter whose number already sits on the header row above it. It keeps
+    # the family bar length: a shorter bar would read as another scale.
+    meter_pct+=("$1")
+    meter_elapsed+=("$2")
+    meter_mode+=("$3")
+    meter_color+=("$4")
+    meter_label+=("$5")
+    lines+=("METER:$((${#meter_pct[@]} - 1))")
+  }
 
-    # Collect all content lines into an array
-    lines=()
-    _tip_title="Claude ${plan}"
-    [[ "$REMAINING" == "true" ]] && _tip_title="${_tip_title} · Remaining"
-    lines+=("CENTER<span font_weight='bold' foreground='${BLUE}'>${_tip_title}</span>")
-    lines+=("SEP")
+  # Collect all content lines into an array
+  lines=()
+  _tip_title="Claude ${plan}"
+  [[ "$REMAINING" == "true" ]] && _tip_title="${_tip_title} · Remaining"
+  lines+=("CENTER<span font_weight='bold' foreground='${BLUE}'>${_tip_title}</span>")
+  lines+=("SEP")
+  lines+=("")
+  lines+=(" <span foreground='${FG}'>  󰔟  Session</span>")
+  _lbl_s="$(display_pct "$session_pct")%"
+  add_meter "$session_pct" "$session_elapsed" tip "$session_color" "$_lbl_s"
+  # El pacing vive con el texto que lo explica, no pegado al %: "34% ↓"
+  # se lee como si el USO hubiera bajado. Misma forma que el panel.
+  lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${s_cd}</span><span foreground='${DIM}'>  ·  ${session_pace_indicator} ${session_pace_pts}</span>")
+  lines+=("")
+  lines+=(" <span foreground='${FG}'>  󰃰  Weekly</span>")
+  _lbl_w="$(display_pct "$weekly_pct")%"
+  add_meter "$weekly_pct" "$weekly_elapsed" tip "$weekly_color" "$_lbl_w"
+  # El pacing vive con el texto que lo explica, no pegado al %: "34% ↓"
+  # se lee como si el USO hubiera bajado. Misma forma que el panel.
+  lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${w_cd}</span><span foreground='${DIM}'>  ·  ${weekly_pace_indicator} ${weekly_pace_pts}</span>")
+
+  if [[ "$has_sonnet" == "true" ]]; then
+    sn_cd=$(countdown "$sonnet_reset")
     lines+=("")
-    lines+=(" <span foreground='${FG}'>  󰔟  Session</span>")
-    _lbl_s="$(display_pct "$session_pct")%"
-    add_meter "$session_pct" "$session_elapsed" tip "$session_color" "$_lbl_s"
-    # El pacing vive con el texto que lo explica, no pegado al %: "34% ↓"
-    # se lee como si el USO hubiera bajado. Misma forma que el panel.
-    lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${s_cd}</span><span foreground='${DIM}'>  ·  ${session_pace_indicator} ${session_pace_pts}</span>")
+    # "<model> · Weekly", the same name the Omarchy panel prints: the
+    # group is the meter, the label is the window inside it. "Sonnet only"
+    # said neither, and the two frontends of one product disagreed.
+    lines+=(" <span foreground='${FG}'>  󱤔  Sonnet · Weekly</span>")
+    _lbl_n="$(display_pct "$sonnet_pct")%"
+    add_meter "$sonnet_pct" "$sonnet_elapsed" tip "$sonnet_color" "$_lbl_n"
+    lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${sn_cd}</span><span foreground='${DIM}'>  ·  ${sonnet_pace_indicator} ${sonnet_pace_pts}</span>")
+  fi
+
+  # One section per model-scoped limit. Index 0 reuses the cached pacing/
+  # countdown behind the {model_*} placeholders so tooltip and placeholders
+  # can never disagree within one run; later entries compute inline.
+  for _mi in "${!model_pcts[@]}"; do
+    _mp="${model_pcts[$_mi]}"
+    if ((_mi == 0)); then
+      _melapsed=$model_elapsed _mtip_pace=$_tip_model_pace
+      _mcolor=$model_color _mcd=$m_cd_val _mpts=$model_pace_pts _mind=$model_pace_indicator
+    else
+      _mpace_out=$(calc_pacing "$_mp" "${model_resets[$_mi]}" "$WEEKLY_WINDOW")
+      read -r _melapsed _micon _mind _mdiscard <<<"$_mpace_out"
+      _mtip_pace="$_micon"
+      [[ "$TOOLTIP_PACE_PTS" == "true" ]] && _mtip_pace="$_mind"
+      _mpts=$(cut -d' ' -f7-8 <<<"$_mpace_out")
+      _mcolor=$(color_for "$_mp")
+      _mcd=$(countdown "${model_resets[$_mi]}")
+    fi
     lines+=("")
-    lines+=(" <span foreground='${FG}'>  󰃰  Weekly</span>")
-    _lbl_w="$(display_pct "$weekly_pct")%"
-    add_meter "$weekly_pct" "$weekly_elapsed" tip "$weekly_color" "$_lbl_w"
-    # El pacing vive con el texto que lo explica, no pegado al %: "34% ↓"
-    # se lee como si el USO hubiera bajado. Misma forma que el panel.
-    lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${w_cd}</span><span foreground='${DIM}'>  ·  ${weekly_pace_indicator} ${weekly_pace_pts}</span>")
+    lines+=(" <span foreground='${FG}'>  󱤔  ${model_names_esc[$_mi]} · Weekly</span>")
+    _lbl_m="$(display_pct "$_mp")%"
+    add_meter "$_mp" "$_melapsed" tip "$_mcolor" "$_lbl_m"
+    lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${_mcd}</span><span foreground='${DIM}'>  ·  ${_mind} ${_mpts}</span>")
+  done
 
-    if [[ "$has_sonnet" == "true" ]]; then
-        sn_cd=$(countdown "$sonnet_reset")
-        lines+=("")
-        # "<model> · Weekly", the same name the Omarchy panel prints: the
-        # group is the meter, the label is the window inside it. "Sonnet only"
-        # said neither, and the two frontends of one product disagreed.
-        lines+=(" <span foreground='${FG}'>  󱤔  Sonnet · Weekly</span>")
-        _lbl_n="$(display_pct "$sonnet_pct")%"
-        add_meter "$sonnet_pct" "$sonnet_elapsed" tip "$sonnet_color" "$_lbl_n"
-        lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${sn_cd}</span><span foreground='${DIM}'>  ·  ${sonnet_pace_indicator} ${sonnet_pace_pts}</span>")
-    fi
-
-    # One section per model-scoped limit. Index 0 reuses the cached pacing/
-    # countdown behind the {model_*} placeholders so tooltip and placeholders
-    # can never disagree within one run; later entries compute inline.
-    for _mi in "${!model_pcts[@]}"; do
-        _mp="${model_pcts[$_mi]}"
-        if (( _mi == 0 )); then
-            _melapsed=$model_elapsed _mtip_pace=$_tip_model_pace
-            _mcolor=$model_color _mcd=$m_cd_val _mpts=$model_pace_pts _mind=$model_pace_indicator
-        else
-            _mpace_out=$(calc_pacing "$_mp" "${model_resets[$_mi]}" "$WEEKLY_WINDOW")
-            read -r _melapsed _micon _mind _mdiscard <<< "$_mpace_out"
-            _mtip_pace="$_micon"
-            [[ "$TOOLTIP_PACE_PTS" == "true" ]] && _mtip_pace="$_mind"
-            _mpts=$(cut -d' ' -f7-8 <<< "$_mpace_out")
-            _mcolor=$(color_for "$_mp")
-            _mcd=$(countdown "${model_resets[$_mi]}")
-        fi
-        lines+=("")
-        lines+=(" <span foreground='${FG}'>  󱤔  ${model_names_esc[$_mi]} · Weekly</span>")
-        _lbl_m="$(display_pct "$_mp")%"
-        add_meter "$_mp" "$_melapsed" tip "$_mcolor" "$_lbl_m"
-        lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${_mcd}</span><span foreground='${DIM}'>  ·  ${_mind} ${_mpts}</span>")
-    done
-
-    if [[ "$extra_show" == "true" ]]; then
-        lines+=("")
-        lines+=("SEP")
-        # The rule already opened the section and the glyph already names it,
-        # so the headline row carries the label AND the data — the same shape
-        # codexbar's credits row uses. A separate "Extra usage" line above a
-        # line starting with the same glyph read as the section title twice.
-        if [[ "$extra_balance_known" == "true" ]]; then
-            lines+=(" <span foreground='${FG}'>  󰄑  Extra usage</span>  <span foreground='${DIM}'>${extra_spent} / ${extra_funded}</span>  <span font_weight='bold' foreground='${extra_color}'>${extra_pct}%</span>")
-            add_meter "$extra_pct_value" 0 flat "" ""
-            lines+=(" <span foreground='${DIM}'>  󰄰  Available: ${extra_available} · Monthly limit: ${extra_limit}</span>")
-        else
-            lines+=(" <span foreground='${FG}'>  󰄑  Extra usage</span>  <span foreground='${DIM}'>${extra_spent} / —</span>")
-            lines+=(" <span foreground='${DIM}'>  󰄰  Available: — · Monthly limit: ${extra_limit}</span>")
-        fi
-    fi
-
-    # API error info (if stale)
-    if [[ -f "$CACHE_DIR/.last_error" ]]; then
-        _le_code="" _le_msg=""
-        # Bounded, and through a process substitution: a FIFO here would park
-        # `read` for ever, and the redirect form gives it the file directly.
-        { read -r _le_code || true; read -r _le_msg || true; } \
-            < <(read_bounded "$CACHE_DIR/.last_error" "$MAX_STATE_BYTES" 2>/dev/null) || true
-        if [[ -n "$_le_code" ]] && [[ "$_le_code" =~ ^[0-9]+$ ]] && [[ "$_le_code" != "000" ]]; then
-            _le_msg=$(pango_escape "$_le_msg")
-            if (( _le_code >= 500 )); then
-                _err_icon="󰅚" _err_color="$RED"
-            else
-                _err_icon="󰀪" _err_color="$ORANGE"
-            fi
-            lines+=("")
-            lines+=("SEP")
-            _err_line=" <span foreground='${_err_color}'>  ${_err_icon}  HTTP ${_le_code}</span>"
-            lines+=("$_err_line")
-            if [[ -n "$_le_msg" ]]; then
-                _wbuf=""
-                # Split on blanks only: an unquoted expansion would also glob,
-                # and a `*` in an API message would list the cwd in the tooltip.
-                _wwords=()
-                read -ra _wwords <<< "$_le_msg"
-                for _wword in "${_wwords[@]}"; do
-                    if [[ -z "$_wbuf" ]]; then
-                        _wbuf="$_wword"
-                    elif (( ${#_wbuf} + 1 + ${#_wword} <= 35 )); then
-                        _wbuf+=" $_wword"
-                    else
-                        lines+=("     <span foreground='${DIM}'>${_wbuf}</span>")
-                        _wbuf="$_wword"
-                    fi
-                done
-                [[ -n "$_wbuf" ]] && lines+=("     <span foreground='${DIM}'>${_wbuf}</span>")
-            fi
-        fi
-    fi
-
-    # Footer: the house freshness line — separator rule, clock glyph,
-    # "Updated HH:MM", and a "· stale (...)" suffix only when the data is not
-    # fresh. Identical shape in the Omarchy shell panel and in every sibling
-    # widget, so a reader learns it once. The blank line above the rule is this
-    # tooltip's own section rhythm (every section is preceded by one).
+  if [[ "$extra_show" == "true" ]]; then
     lines+=("")
     lines+=("SEP")
-    lines+=(" <span foreground='${DIM}'>  󰅐  Updated ${_updated}</span>${_stale_suffix}")
+    # The rule already opened the section and the glyph already names it,
+    # so the headline row carries the label AND the data — the same shape
+    # codexbar's credits row uses. A separate "Extra usage" line above a
+    # line starting with the same glyph read as the section title twice.
+    if [[ "$extra_balance_known" == "true" ]]; then
+      lines+=(" <span foreground='${FG}'>  󰄑  Extra usage</span>  <span foreground='${DIM}'>${extra_spent} / ${extra_funded}</span>  <span font_weight='bold' foreground='${extra_color}'>${extra_pct}%</span>")
+      add_meter "$extra_pct_value" 0 flat "" ""
+      lines+=(" <span foreground='${DIM}'>  󰄰  Available: ${extra_available} · Monthly limit: ${extra_limit}</span>")
+    else
+      lines+=(" <span foreground='${FG}'>  󰄑  Extra usage</span>  <span foreground='${DIM}'>${extra_spent} / —</span>")
+      lines+=(" <span foreground='${DIM}'>  󰄰  Available: — · Monthly limit: ${extra_limit}</span>")
+    fi
+  fi
 
-    # Calculate max width from content. The meters are skipped: their width is
-    # DERIVED from this number, so measuring them here would be circular.
-    max_w=0
-    for line in "${lines[@]}"; do
-        [[ "$line" == "SEP" || "$line" == METER:* ]] && continue
-        [[ "$line" == CENTER* ]] && line="${line#CENTER}"
-        plain=$(strip_tags "$line")
-        (( ${#plain} > max_w )) && max_w=${#plain}
-    done
-    INNER_W=$(( max_w + 1 ))
+  # API error info (if stale)
+  if [[ -f "$CACHE_DIR/.last_error" ]]; then
+    _le_code="" _le_msg=""
+    # Bounded, and through a process substitution: a FIFO here would park
+    # `read` for ever, and the redirect form gives it the file directly.
+    {
+      read -r _le_code || true
+      read -r _le_msg || true
+    } \
+      < <(read_bounded "$CACHE_DIR/.last_error" "$MAX_STATE_BYTES" 2>/dev/null) || true
+    if [[ -n "$_le_code" ]] && [[ "$_le_code" =~ ^[0-9]+$ ]] && [[ "$_le_code" != "000" ]]; then
+      _le_msg=$(pango_escape "$_le_msg")
+      if ((_le_code >= 500)); then
+        _err_icon="󰅚" _err_color="$RED"
+      else
+        _err_icon="󰀪" _err_color="$ORANGE"
+      fi
+      lines+=("")
+      lines+=("SEP")
+      _err_line=" <span foreground='${_err_color}'>  ${_err_icon}  HTTP ${_le_code}</span>"
+      lines+=("$_err_line")
+      if [[ -n "$_le_msg" ]]; then
+        _wbuf=""
+        # Split on blanks only: an unquoted expansion would also glob,
+        # and a `*` in an API message would list the cwd in the tooltip.
+        _wwords=()
+        read -ra _wwords <<<"$_le_msg"
+        for _wword in "${_wwords[@]}"; do
+          if [[ -z "$_wbuf" ]]; then
+            _wbuf="$_wword"
+          elif ((${#_wbuf} + 1 + ${#_wword} <= 35)); then
+            _wbuf+=" $_wword"
+          else
+            lines+=("     <span foreground='${DIM}'>${_wbuf}</span>")
+            _wbuf="$_wword"
+          fi
+        done
+        [[ -n "$_wbuf" ]] && lines+=("     <span foreground='${DIM}'>${_wbuf}</span>")
+      fi
+    fi
+  fi
 
-    # ONE bar length for the whole tooltip. The meters stack, so a reader
-    # compares them against each other; a per-row length would turn that
-    # comparison into a lie.
-    # A rule carries one leading space and INNER_W-2 cells, so it ends on
-    # column INNER_W-1. THAT column is the tooltip's right edge, and the value
-    # has to land on it — not on INNER_W, which nothing else reaches.
-    tip_right=$(( INNER_W - 1 ))
-    tip_bar_len=$(( tip_right - TIP_IND - TIP_GAP_MIN - TIP_VAL ))
-    (( tip_bar_len < TIP_BAR_MIN )) && tip_bar_len=$TIP_BAR_MIN
-    (( tip_bar_len > TIP_BAR_MAX )) && tip_bar_len=$TIP_BAR_MAX
-    # A clamp at the low end makes the meter row wider than every text line, so
-    # the rules grow to match it and the right edge stays one straight line.
-    _row_w=$(( TIP_IND + tip_bar_len + TIP_GAP_MIN + TIP_VAL ))
-    if (( _row_w > tip_right )); then tip_right=$_row_w; INNER_W=$(( tip_right + 1 )); fi
+  # Footer: the house freshness line — separator rule, clock glyph,
+  # "Updated HH:MM", and a "· stale (...)" suffix only when the data is not
+  # fresh. Identical shape in the Omarchy shell panel and in every sibling
+  # widget, so a reader learns it once. The blank line above the rule is this
+  # tooltip's own section rhythm (every section is preceded by one).
+  lines+=("")
+  lines+=("SEP")
+  lines+=(" <span foreground='${DIM}'>  󰅐  Updated ${_updated}</span>${_stale_suffix}")
 
-    # make_bar and the gradient read BAR_LEN. The bar TEXT is already built at
-    # this point, so the tooltip is free to move it — but GRAD_CELLS is indexed
-    # by cell position, so it has to be rebuilt for the new length. Without the
-    # rebuild a longer bar reads past the end of the array, which is fatal
-    # under `set -u`.
-    BAR_LEN=$tip_bar_len
-    GRAD_CELLS=(); init_grad_cells
+  # Calculate max width from content. The meters are skipped: their width is
+  # DERIVED from this number, so measuring them here would be circular.
+  max_w=0
+  for line in "${lines[@]}"; do
+    [[ "$line" == "SEP" || "$line" == METER:* ]] && continue
+    [[ "$line" == CENTER* ]] && line="${line#CENTER}"
+    plain=$(strip_tags "$line")
+    ((${#plain} > max_w)) && max_w=${#plain}
+  done
+  INNER_W=$((max_w + 1))
 
-    # Resolve the parked meters now that the geometry is known.
-    printf -v _tip_ind '%*s' "$TIP_IND" ''
-    for _mi_r in "${!lines[@]}"; do
-        [[ "${lines[$_mi_r]}" == METER:* ]] || continue
-        _m=${lines[$_mi_r]#METER:}
-        if [[ "${meter_mode[$_m]}" == "flat" ]]; then
-            _mbar=$(make_bar "${meter_pct[$_m]}" "")
-        else
-            _mbar=$(display_bar "${meter_pct[$_m]}" "${meter_elapsed[$_m]}" "$TOOLTIP_PACE_PTS")
-        fi
-        _mlbl="${meter_label[$_m]}"
-        if [[ -z "$_mlbl" ]]; then
-            lines[$_mi_r]="${_tip_ind}${_mbar}"
-            continue
-        fi
-        # The gap absorbs the label's own width, so the LAST character of the
-        # value lands on INNER_W whatever the label says.
-        _mpad=$(( tip_right - TIP_IND - tip_bar_len - ${#_mlbl} ))
-        (( _mpad < 1 )) && _mpad=1
-        printf -v _mgap '%*s' "$_mpad" ''
-        lines[$_mi_r]="${_tip_ind}${_mbar}${_mgap}<span font_weight='bold' foreground='${meter_color[$_m]}'>${_mlbl}</span>"
-    done
+  # ONE bar length for the whole tooltip. The meters stack, so a reader
+  # compares them against each other; a per-row length would turn that
+  # comparison into a lie.
+  # A rule carries one leading space and INNER_W-2 cells, so it ends on
+  # column INNER_W-1. THAT column is the tooltip's right edge, and the value
+  # has to land on it — not on INNER_W, which nothing else reaches.
+  tip_right=$((INNER_W - 1))
+  tip_bar_len=$((tip_right - TIP_IND - TIP_GAP_MIN - TIP_VAL))
+  ((tip_bar_len < TIP_BAR_MIN)) && tip_bar_len=$TIP_BAR_MIN
+  ((tip_bar_len > TIP_BAR_MAX)) && tip_bar_len=$TIP_BAR_MAX
+  # A clamp at the low end makes the meter row wider than every text line, so
+  # the rules grow to match it and the right edge stays one straight line.
+  _row_w=$((TIP_IND + tip_bar_len + TIP_GAP_MIN + TIP_VAL))
+  if ((_row_w > tip_right)); then
+    tip_right=$_row_w
+    INNER_W=$((tip_right + 1))
+  fi
 
-    # Build separator dynamically
-    sep=""
-    printf -v sep '%*s' "$(( INNER_W - 2 ))" ''; sep="${sep// /─}"
-    sep=" <span foreground='${DIM}'>${sep}</span>"
+  # make_bar and the gradient read BAR_LEN. The bar TEXT is already built at
+  # this point, so the tooltip is free to move it — but GRAD_CELLS is indexed
+  # by cell position, so it has to be rebuilt for the new length. Without the
+  # rebuild a longer bar reads past the end of the array, which is fatal
+  # under `set -u`.
+  BAR_LEN=$tip_bar_len
+  GRAD_CELLS=()
+  init_grad_cells
 
-    # Una sola forma de tooltip, con la fuente fijada.
-    #
-    # El pin no es decoración: las reglas están hechas de ─, y en una fuente
-    # proporcional ese carácter mide casi el doble que una letra. El tooltip
-    # entonces se dimensiona por las reglas y le queda un margen muerto a la
-    # derecha del texto. Waybar renderiza el tooltip en una ventana GTK que
-    # IGNORA font-family del CSS, así que el markup es el único lugar donde
-    # esto se puede decir.
-    t=""
-    for line in "${lines[@]}"; do
-        if [[ "$line" == "SEP" ]]; then
-            t+="${sep}${NL}"
-        elif [[ "$line" == CENTER* ]]; then
-            # Leading space aligns the title with the rule and section headers.
-            t+=" ${line#CENTER}${NL}"
-        else
-            t+="${line}${NL}"
-        fi
-    done
-    t="${t%"$NL"}"
-    _tf=$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/'"'"'/\&apos;/g' <<< "$TOOLTIP_FONT")
-    t="<span font_family='${_tf}'>${t}</span>"
+  # Resolve the parked meters now that the geometry is known.
+  printf -v _tip_ind '%*s' "$TIP_IND" ''
+  for _mi_r in "${!lines[@]}"; do
+    [[ "${lines[$_mi_r]}" == METER:* ]] || continue
+    _m=${lines[$_mi_r]#METER:}
+    if [[ "${meter_mode[$_m]}" == "flat" ]]; then
+      _mbar=$(make_bar "${meter_pct[$_m]}" "")
+    else
+      _mbar=$(display_bar "${meter_pct[$_m]}" "${meter_elapsed[$_m]}" "$TOOLTIP_PACE_PTS")
+    fi
+    _mlbl="${meter_label[$_m]}"
+    if [[ -z "$_mlbl" ]]; then
+      lines[$_mi_r]="${_tip_ind}${_mbar}"
+      continue
+    fi
+    # The gap absorbs the label's own width, so the LAST character of the
+    # value lands on INNER_W whatever the label says.
+    _mpad=$((tip_right - TIP_IND - tip_bar_len - ${#_mlbl}))
+    ((_mpad < 1)) && _mpad=1
+    printf -v _mgap '%*s' "$_mpad" ''
+    lines[$_mi_r]="${_tip_ind}${_mbar}${_mgap}<span font_weight='bold' foreground='${meter_color[$_m]}'>${_mlbl}</span>"
+  done
+
+  # Build separator dynamically
+  sep=""
+  printf -v sep '%*s' "$((INNER_W - 2))" ''
+  sep="${sep// /─}"
+  sep=" <span foreground='${DIM}'>${sep}</span>"
+
+  # Una sola forma de tooltip, con la fuente fijada.
+  #
+  # El pin no es decoración: las reglas están hechas de ─, y en una fuente
+  # proporcional ese carácter mide casi el doble que una letra. El tooltip
+  # entonces se dimensiona por las reglas y le queda un margen muerto a la
+  # derecha del texto. Waybar renderiza el tooltip en una ventana GTK que
+  # IGNORA font-family del CSS, así que el markup es el único lugar donde
+  # esto se puede decir.
+  t=""
+  for line in "${lines[@]}"; do
+    if [[ "$line" == "SEP" ]]; then
+      t+="${sep}${NL}"
+    elif [[ "$line" == CENTER* ]]; then
+      # Leading space aligns the title with the rule and section headers.
+      t+=" ${line#CENTER}${NL}"
+    else
+      t+="${line}${NL}"
+    fi
+  done
+  t="${t%"$NL"}"
+  _tf=$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/'"'"'/\&apos;/g' <<<"$TOOLTIP_FONT")
+  t="<span font_family='${_tf}'>${t}</span>"
 fi
 
 # Monochrome tooltip: strip color from the finished markup, whichever path
 # built it (default, --tooltip-format, framed). Bars, markers, box drawing,
 # bold and layout survive; only the hues go.
 if [[ "$TOOLTIP_PLAIN" == "true" ]]; then
-    t=$(printf '%s' "$t" | decolor)
+  t=$(printf '%s' "$t" | decolor)
 fi
 
 # --- Output waybar JSON ---
 # Text and tooltip go to jq on stdin (b64_lines), not as `--arg`: both can show
 # the extra-usage amounts — the tooltip section, the {extra_*} placeholders.
 b64_lines "$bar_text" "$t" |
-    jq -nRc --arg class "$class" \
-        '[inputs | @base64d] as [$text, $tooltip] | {text:$text, tooltip:$tooltip, class:$class}'
+  jq -nRc --arg class "$class" \
+    '[inputs | @base64d] as [$text, $tooltip] | {text:$text, tooltip:$tooltip, class:$class}'
